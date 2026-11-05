@@ -26,6 +26,7 @@ class AIJumpEngine(threading.Thread):
     """后台线程。所有回调都在本线程调用，GUI 侧请自行投递到 UI 队列。"""
 
     def __init__(self, window_rect, hwnd=None, screen_region=None,
+                 window_title=None,
                  calibrator=None, cfg=None, state_path=None,
                  base_coefficient=2.0, head_diameter=None,
                  on_log=None, on_frame=None, on_stats=None, on_count=None,
@@ -34,6 +35,7 @@ class AIJumpEngine(threading.Thread):
         super().__init__(daemon=True, **kwargs)
         self.window_rect = tuple(window_rect)
         self.hwnd = hwnd
+        self.window_title = window_title
         self.screen_region = screen_region
         state_path = state_path or DEFAULT_STATE_PATH
         if not os.path.isabs(state_path):
@@ -75,19 +77,44 @@ class AIJumpEngine(threading.Thread):
             return self._paused
 
     # ── 抓图 ────────────────────────────────────────────────
+    def _resolve_hwnd(self):
+        """窗口句柄失效时按标题重新定位，不依赖启动时记下的坐标。"""
+        if self.hwnd:
+            return self.hwnd
+        if self.window_title:
+            try:
+                from common.pc_control import enum_visible_windows
+                for h, t, *_ in enum_visible_windows():
+                    if t.strip() == self.window_title.strip():
+                        self.hwnd = int(h)
+                        self.on_log("已按标题重新定位窗口：%s" % t)
+                        return self.hwnd
+            except Exception:
+                pass
+        return None
+
     def _grab(self):
         if self.frame_source is not None:
             return self.frame_source()
-        if self.hwnd:
+        hwnd = self._resolve_hwnd()
+        if hwnd:
             try:
-                full = grab_window(self.hwnd)
+                full = grab_window(hwnd)
                 # 裁掉标题栏，只保留客户区：原版公式与 head_diameter 都基于客户区
-                ox, oy, cw, ch = client_area(self.hwnd)
+                ox, oy, cw, ch = client_area(hwnd)
                 if cw > 20 and ch > 20:
-                    return np.ascontiguousarray(full[oy:oy + ch, ox:ox + cw])
-                return full
+                    crop = np.ascontiguousarray(full[oy:oy + ch, ox:ox + cw])
+                    if crop.std() > 3.0:        # 排除未渲染 / 黑图
+                        return crop
+                    self.on_log("PrintWindow 返回空白画面，改用屏幕截图")
+                else:
+                    return full
             except Exception as e:
-                self.on_log("窗口抓图失败(%s)，回退屏幕抓图" % e)
+                self.on_log("窗口抓图失败(%s)，改用屏幕截图" % e)
+            # 关键：回退时用**当前**客户区坐标，窗口移到屏幕任何位置都能截到
+            if self._screen is None:
+                self._screen = ScreenGrabber()
+            return self._screen.grab(client_rect_screen(hwnd))
         if self._screen is None:
             self._screen = ScreenGrabber()
         return self._screen.grab(self.screen_region or self.window_rect)
@@ -107,6 +134,8 @@ class AIJumpEngine(threading.Thread):
         s0 = self.calibrator.stats()
         self.on_log("AI 模式启动 | 沿用原版公式 | 基准系数 %.3f 当前系数 %.3f | 已有样本 %d" %
                     (s0["base_factor"], s0["factor"], s0["samples"]))
+        self.on_log("截图方式: %s" % ("窗口级 PrintWindow（与窗口在屏幕哪个位置无关）"
+                                      if self.hwnd else "屏幕区域（建议先选窗口以启用窗口级抓图）"))
         misses = 0
         self._waiting_game = False
         try:

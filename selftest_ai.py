@@ -270,6 +270,39 @@ def test_gui():
     app.root.destroy()
 
 
+def test_window_position_independence():
+    """窗口级截图必须与窗口在屏幕上的位置无关。"""
+    import ctypes
+    import tkinter as tk
+    from ai_control import client_area, grab_window
+    root = tk.Tk()
+    root.geometry("240x180+1600+200")          # 屏幕右侧
+    c = tk.Canvas(root, bg="#336699", highlightthickness=0)
+    c.pack(fill=tk.BOTH, expand=True)
+    c.create_rectangle(20, 20, 140, 110, fill="#ffcc00", outline="")
+    c.create_text(120, 150, text="probe", fill="white")
+    root.update()
+    time.sleep(0.2)
+    top = ctypes.windll.user32.GetAncestor(int(root.winfo_id()), 2)
+    full = grab_window(top)
+    ox, oy, cw, ch = client_area(top)
+    crop = full[oy:oy + ch, ox:ox + cw]
+    check("截图：窗口在屏幕右侧也能按客户区正确抓取",
+          crop.shape[1] == cw and crop.shape[0] == ch and crop.std() > 3,
+          "window=%dx%d client=%dx%d std=%.1f" %
+          (full.shape[1], full.shape[0], cw, ch, crop.std()))
+
+    root.geometry("+120+220")                   # 移到左侧
+    root.update()
+    time.sleep(0.2)
+    full2 = grab_window(top)
+    crop2 = full2[oy:oy + ch, ox:ox + cw]
+    check("截图：窗口移动后画面仍正确（不依赖旧坐标）",
+          crop2.shape == crop.shape and crop2.std() > 3,
+          "shape=%s std=%.1f" % (crop2.shape, crop2.std()))
+    root.destroy()
+
+
 def test_window_grab():
     from ai_control import grab_window
     from common.pc_control import enum_visible_windows
@@ -286,7 +319,7 @@ def main():
     t0 = time.time()
     for fn in (test_vision, test_calibration, test_precise_press,
                test_environment, test_game_over_behavior, test_engine,
-               test_gui, test_window_grab):
+               test_gui, test_window_position_independence, test_window_grab):
         try:
             fn()
         except Exception as e:

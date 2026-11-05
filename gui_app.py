@@ -555,10 +555,17 @@ class JumpGUI:
             key = self.window_combo.get()
             data = self._window_data.get(key)
             hwnd = data[0] if data else None
+            if hwnd:
+                try:
+                    # 每次开始都刷新客户区，避免用启动时的旧坐标截错地方
+                    self.game_region = get_window_client_rect(hwnd)
+                except Exception:
+                    pass
             window_rect = tuple(data[1:]) if data else self.game_region
             self.ai_engine = AIJumpEngine(
                 window_rect=window_rect, hwnd=hwnd,
                 screen_region=self.game_region,
+                window_title=key.rsplit('  (', 1)[0] if key else None,
                 base_coefficient=self.coef_var.get(),
                 head_diameter=None,   # AI 模式按客户区宽/8 自动算，与原版 gw/8 一致
                 on_log=lambda s: self.update_queue.put(('log', s)),
