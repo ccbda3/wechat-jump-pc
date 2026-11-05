@@ -205,3 +205,25 @@ def client_rect_screen(hwnd):
     wl, wt, _, _ = get_window_rect(hwnd)
     ox, oy, cw, ch = client_area(hwnd)
     return (wl + ox, wt + oy, wl + ox + cw, wt + oy + ch)
+
+
+user32.GetForegroundWindow.restype = ctypes.c_void_p
+user32.SetForegroundWindow.argtypes = [ctypes.c_void_p]
+
+
+def ensure_foreground(hwnd):
+    """点击前确保游戏窗口在前台。
+
+    SendInput 是全局鼠标事件，窗口不在前台时点击会落到别的窗口上，
+    表现就是「棋子纹丝不动」。返回是否发生了切换。
+    """
+    try:
+        if user32.GetForegroundWindow() == hwnd:
+            return False
+        if user32.IsIconic(hwnd):
+            user32.ShowWindow(hwnd, 9)          # SW_RESTORE
+        user32.SetForegroundWindow(hwnd)
+        time.sleep(0.05)
+        return True
+    except Exception:
+        return False

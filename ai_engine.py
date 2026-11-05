@@ -15,7 +15,7 @@ import numpy as np
 
 from ai_calibration import AdaptiveCoefficient, legacy_press_ms
 from ai_control import (ScreenGrabber, client_area, client_rect_screen,
-                        grab_window, precise_press, to_pil)
+                        ensure_foreground, grab_window, precise_press, to_pil)
 from ai_environment import EnvironmentMonitor
 from ai_vision import (VisionConfig, analyze, annotate, estimate_shift,
                        is_settled)
@@ -234,6 +234,8 @@ class AIJumpEngine(threading.Thread):
                 base_unit = legacy_press_ms(d_req, state.head_diameter, 1.0)
                 k = self.calibrator.stats()["factor"]
                 t_ms = self.calibrator.predict(base_unit, d_req)
+                if self.hwnd and not self.dry_run and ensure_foreground(self.hwnd):
+                    self.on_log("已切回游戏窗口，保证点击落到游戏上")
                 x, y = self._click_point()
                 actual_t = precise_press(x, y, t_ms, no_click=self.dry_run)
 

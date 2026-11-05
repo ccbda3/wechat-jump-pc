@@ -79,9 +79,11 @@ class EnvironmentMonitor:
                 resized = True
         self._last_size = (w, h)
 
-        if self._fixed_hd is None or resized:
-            self._hd = w / 8.0                  # 原版 _game_loop 的估算规则
-        hd = max(float(self._hd or w / 8.0), 1.0)
+        if self._hd is None:
+            # 整个会话只按首帧客户区宽算一次，之后固定不变：
+            # 参数飘来飘去会让每次效果都不一样，自适应只交给系数 k / near
+            self._hd = w / 8.0
+        hd = max(float(self._hd), 1.0)
 
         jump = 0.0
         if self._last_brightness is not None:

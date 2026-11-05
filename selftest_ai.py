@@ -79,6 +79,13 @@ def test_vision():
     moved = synthetic_frame(piece=(300, 700), board=(500, 620))
     check("落稳：画面大幅变化判定未静止", not is_settled(frame, moved, cfg))
 
+    live2 = os.path.join(ROOT, "debug_samples", "live_client2.png")
+    if os.path.exists(live2):
+        img2 = cv2.imread(live2)
+        check("真实画面：游戏进行中不会被误判成结算页",
+              not analyze(img2).game_over,
+              "中部深色占比应远低于 0.22 阈值")
+
     live = os.path.join(ROOT, "debug_samples", "live_client.png")
     if os.path.exists(live):
         img = cv2.imread(live)
@@ -221,19 +228,20 @@ def test_environment():
     check("环境：黑屏判定无效（不会瞎点击）", not s2.valid, s2.note)
     big = cv2.resize(frame, (700, 1200))
     s3 = mon.update(big, (0, 0, 700, 1200))
-    check("环境：窗口缩放被检测并重算头部直径",
-          s3.resized and abs(s3.head_diameter - 700 / 8.0) < 1.0,
+    check("环境：窗口缩放能被检测，但头部直径固定不变",
+          s3.resized and abs(s3.head_diameter - 631 / 8.0) < 2.0,
           "resized=%s hd=%.0f" % (s3.resized, s3.head_diameter))
 
 
 def synthetic_game_over():
-    """模拟结算页：中下部大片白 + 再玩一局按钮区域白色。"""
+    """模拟结算页：深色遮罩 + 深色排行榜卡片 + 白色「再玩一局」按钮。"""
     f = synthetic_frame()
     h, w = f.shape[:2]
+    f[:] = (f.astype(np.float32) * 0.45).astype(np.uint8)
+    cv2.rectangle(f, (int(w * 0.15), int(h * 0.30)),
+                  (int(w * 0.85), int(h * 0.66)), (35, 35, 40), -1)
     cv2.rectangle(f, (int(w * 0.32), int(h * 0.68)),
                   (int(w * 0.88), int(h * 0.83)), (250, 250, 250), -1)
-    cv2.rectangle(f, (int(w * 0.22), int(h * 0.57)),
-                  (int(w * 0.86), int(h * 0.66)), (240, 240, 240), -1)
     return f
 
 

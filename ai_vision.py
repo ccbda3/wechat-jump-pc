@@ -194,25 +194,34 @@ def detect_board(bgr, piece, cfg=None):
 # ── 结算页 ──────────────────────────────────────────────────
 
 def detect_game_over(bgr, piece_found=False):
-    """结算页特征：中下部有一块**宽而扁的白色按钮**，不是随便一片白。
+    """结算页特征：整屏被深色遮罩压暗 + 中下部有白色按钮/卡片。
 
-    只看白色占比时，游戏里跳上一个白色大方块也会凑够比例，导致误判
-    「已结算」而停下。结算页的「再玩一局」按钮是宽约 0.45w、高约 0.07h、
-    宽高比 3~6 的圆角矩形，用连通域形状能把它和方块区分开。
+    只数白色像素会被游戏里的白色方块骗到（实测方块宽 0.41w、宽高比 2.63，
+    和按钮 0.45w / 3.34 几乎一样）。真正可靠的差异是**深色占比**：
+    结算页中部深色像素约 52%，游戏画面只有 1.5%，差 35 倍。
     """
     h, w = bgr.shape[:2]
+    gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
+    mid = gray[int(h * 0.30):int(h * 0.70), int(w * 0.15):int(w * 0.85)]
+    if mid.size == 0:
+        return False
+    if float((mid < 70).mean()) <= 0.22:      # 没有深色遮罩，一定不是结算页
+        return False
+
     roi = bgr[int(h * 0.64):int(h * 0.88), int(w * 0.26):int(w * 0.94)]
     if roi.size == 0:
         return False
-    white = (roi.min(axis=2) > 220).astype(np.uint8)
-    n, labels, stats, cents = cv2.connectedComponentsWithStats(white, 8)
+    white = (roi.min(axis=2) > 220)
+    if float(white.mean()) > 0.18:            # 深色遮罩 + 大片白卡片
+        return True
+    n, labels, stats, cents = cv2.connectedComponentsWithStats(
+        white.astype(np.uint8), 8)
     for i in range(1, n):
         x, y, bw, bh, area = [int(v) for v in stats[i]]
-        if (bw > 0.30 * w and bh > 0.040 * h and 2.0 < bw / max(bh, 1) < 9.0
+        if (bw > 0.35 * w and bh > 0.040 * h and 2.5 < bw / max(bh, 1) < 9.0
                 and area > 0.010 * w * h):
             return True
-    # 兜底：极端整片白色（加载页之类）
-    return bool(white.mean() > 0.55)
+    return False
 
 
 # ── 原版算法兜底 ────────────────────────────────────────────
