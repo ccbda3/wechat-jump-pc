@@ -21,3 +21,9 @@ Thumbs.db
 # 本地部署环境
 .venv/
 *.log
+
+# AI 模式本地产物
+debug_samples/
+ai_calibration.json
+ai_calibration.json.tmp
+vision_config.json

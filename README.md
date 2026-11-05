@@ -281,6 +281,39 @@ wechat-jump-pc/
 
 ---
 
+## AI 自校准模式（实验）
+
+经典模式是**开环**的：跳完不看落点，误差不会收敛，所以时好时坏。AI 模式改为**闭环在线学习**，勾选界面上的「启用 AI 模式」再点「开始跳跃」即可，经典逻辑完全保留，随时可切回。
+
+| 环节 | 经典模式 | AI 模式 |
+| --- | --- | --- |
+| 截图 | `ImageGrab`（被遮挡就错） | `PrintWindow` 抓窗口自身，被遮挡也能拿到画面 |
+| 识别 | 硬编码 RGB + 固定斜率推算 Y | OpenCV HSV + 连通域直接测出台面中心，原版算法兜底 |
+| 按压时长 | 固定物理公式 × 手调系数 | 递推最小二乘在线拟合 `t = a·d + b`，几十跳自动收敛 |
+| 计时 | `time.sleep()`（约 15ms 抖动） | `perf_counter` 忙等 + 1ms 系统时钟（误差 < 1ms） |
+| 跳完之后 | 什么都不做 | 等画面静止 → 测实际落点 → 偏差回写校准器 |
+
+学习结果保存在 `ai_calibration.json`，界面会显示样本数、当前 `a`/`b` 和近期偏差；「重置学习记录」可从头学。检测到结算页会自动停止。
+
+**依赖**：`setup.bat` 会一并安装 `numpy / opencv-python / mss`。
+
+**调试命令**（在项目目录下）：
+
+```
+.venv\Scripts\python.exe selftest_ai.py                     # 离线自测，不碰鼠标
+.venv\Scripts\python.exe ai_vision.py --collect 20          # 开局后采集真实画面样本
+.venv\Scripts\python.exe ai_vision.py --debug debug_samples\xxx.png   # 生成标注图
+.venv\Scripts\python.exe ai_vision.py --init-config         # 生成可调阈值 vision_config.json
+```
+
+感知阈值目前用合成画面和结算页验证过；若实机识别不准，用 `--collect` 采几张真实画面、`--debug` 看标注，再改 `vision_config.json` 里的 HSV / 面积 / 色差阈值。闭环会自动吸收**稳定的**系统偏差，但识别完全失效时无法补偿。
+
+新增模块：`ai_vision.py`（感知）、`ai_calibration.py`（在线学习）、`ai_control.py`（抓图/精确按压）、`ai_engine.py`（闭环主循环）、`selftest_ai.py`（自测）。
+
+> 仅供学习交流使用；自动刷分可能触发游戏风控，请用不重要的账号测试。
+
+---
+
 ## License
 
 仅供学习交流使用。

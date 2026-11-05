@@ -28,6 +28,15 @@ from common.pc_control import (
     enum_visible_windows, get_window_client_rect, get_window_rect,
 )
 
+# AI 自校准模块为可选依赖：缺库时经典模式仍可正常使用
+try:
+    from ai_engine import AIJumpEngine
+    AI_AVAILABLE = True
+    AI_IMPORT_ERROR = None
+except Exception as _e:      # pragma: no cover
+    AI_AVAILABLE = False
+    AI_IMPORT_ERROR = _e
+
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 REGION_CONFIG_PATH = os.path.join(PROJECT_ROOT, 'config', 'pc_region.json')
 PARAM_CONFIG_PATH = os.path.join(PROJECT_ROOT, 'pc_config.json')
@@ -163,6 +172,10 @@ class JumpGUI:
         self.root.configure(bg='#1e1e2e')
         self.root.protocol('WM_DELETE_WINDOW', self.on_close)
 
+        self.ai_mode = tk.BooleanVar(value=False)
+        self.ai_engine = None
+        self.ai_stats_text = tk.StringVar(value='AI 学习: 未启动')
+
         self.running = False
         self.paused = False
         self.game_thread = None
@@ -275,6 +288,21 @@ class JumpGUI:
                     width=7, command=self._on_param_change).pack(side=tk.LEFT)
         ttk.Label(hd_row, text='px (自动估算，可微调)',
                   font=('Microsoft YaHei UI', 7)).pack(side=tk.LEFT, padx=4)
+
+        # ── AI 自校准（新增，不影响上面的经典参数）──
+        frm_ai = ttk.Labelframe(inner, text='AI 自校准（实验）', padding=6)
+        frm_ai.pack(fill=tk.X, pady=(0, 8))
+        ttk.Checkbutton(frm_ai, text='启用 AI 模式（自动学习按压时长）',
+                        variable=self.ai_mode).pack(anchor=tk.W)
+        ttk.Label(frm_ai, text='窗口级抓图 + 落点反馈 + 在线拟合，无需手调系数',
+                  font=('Microsoft YaHei UI', 7), wraplength=290,
+                  foreground='#7f849c').pack(anchor=tk.W, pady=(2, 0))
+        self.ai_stats_label = ttk.Label(frm_ai, textvariable=self.ai_stats_text,
+                                        font=('Consolas', 8), foreground='#89b4fa',
+                                        wraplength=290)
+        self.ai_stats_label.pack(anchor=tk.W, pady=(4, 0))
+        ttk.Button(frm_ai, text='↺ 重置学习记录',
+                   command=self._reset_ai).pack(anchor=tk.W, pady=(4, 0))
 
         # ── 控制按钮 ──
         frm3 = ttk.Frame(inner)
@@ -503,6 +531,12 @@ class JumpGUI:
             messagebox.showwarning('提示', '请先选择游戏窗口')
             return
 
+        use_ai = self.ai_mode.get()
+        if use_ai and not AI_AVAILABLE:
+            messagebox.showerror('AI 模块不可用',
+                                 '请先运行 setup.bat 安装依赖。\n%s' % AI_IMPORT_ERROR)
+            return
+
         PARAMS['press_coefficient'] = self.coef_var.get()
         PARAMS['head_diameter'] = self.hd_var.get()
 
@@ -514,12 +548,29 @@ class JumpGUI:
         self.stop_btn.configure(state=tk.NORMAL)
         self.pause_btn.configure(state=tk.NORMAL, text='⏸  暂停')
 
-        self._log('=== 开始自动跳跃 ===')
+        self._log('=== 开始自动跳跃（%s） ===' % ('AI 自校准' if use_ai else '经典参数'))
 
-        self.game_thread = threading.Thread(target=self._game_loop, daemon=True)
-        self.game_thread.start()
+        if use_ai:
+            key = self.window_combo.get()
+            data = self._window_data.get(key)
+            hwnd = data[0] if data else None
+            window_rect = tuple(data[1:]) if data else self.game_region
+            self.ai_engine = AIJumpEngine(
+                window_rect=window_rect, hwnd=hwnd,
+                screen_region=self.game_region,
+                on_log=lambda s: self.update_queue.put(('log', s)),
+                on_frame=lambda img: self.update_queue.put(('frame', img)),
+                on_stats=lambda d: self.update_queue.put(('aistats', d)),
+                on_count=lambda n: self.update_queue.put(('count', n)),
+            )
+            self.ai_engine.start()
+        else:
+            self.game_thread = threading.Thread(target=self._game_loop, daemon=True)
+            self.game_thread.start()
 
     def stop_game(self):
+        if self.ai_engine and self.ai_engine.is_alive():
+            self.ai_engine.stop()
         self.running = False
         self.paused = False
         self.start_btn.configure(state=tk.NORMAL)
@@ -531,6 +582,11 @@ class JumpGUI:
         if not self.running:
             return
         self.paused = not self.paused
+        if self.ai_engine and self.ai_engine.is_alive():
+            if self.paused:
+                self.ai_engine.pause()
+            else:
+                self.ai_engine.resume()
         if self.paused:
             self.pause_btn.configure(text='▶  继续')
             self._log('⏸ 已暂停')
@@ -540,6 +596,8 @@ class JumpGUI:
 
     def on_close(self):
         self.running = False
+        if self.ai_engine:
+            self.ai_engine.stop()
         self.root.destroy()
 
     # ── 游戏主循环（后台线程）────────────────
@@ -622,7 +680,10 @@ class JumpGUI:
                 elif msg_type == 'log':
                     self._log(data)
                 elif msg_type == 'count':
+                    self.jump_count = data
                     self.jump_count_label.configure(text=f'跳跃: {data} 次')
+                elif msg_type == 'aistats':
+                    self._update_ai_stats(data)
         except queue.Empty:
             pass
         self.root.after(120, self._process_updates)
@@ -635,6 +696,24 @@ class JumpGUI:
         self.log_text.insert(tk.END, f'[{ts}] {msg}\n')
         self.log_text.see(tk.END)
         self.log_text.configure(state=tk.DISABLED)
+
+    def _update_ai_stats(self, d):
+        ewma = d.get('ewma_err')
+        tail = '偏差 %+.0fpx' % ewma if ewma is not None else '偏差 --'
+        self.ai_stats_text.set('样本 %d | a=%.3f ms/px | b=%.0fms | %s' %
+                               (d['samples'], d['a'], d['b'], tail))
+
+    def _reset_ai(self):
+        if self.ai_engine and self.ai_engine.is_alive():
+            messagebox.showinfo('提示', '请先停止 AI 模式再重置')
+            return
+        path = os.path.join(PROJECT_ROOT, 'ai_calibration.json')
+        try:
+            os.remove(path)
+            self._log('AI 学习记录已清空，下次启动从头学习')
+        except FileNotFoundError:
+            self._log('暂无 AI 学习记录')
+        self.ai_stats_text.set('AI 学习: 已重置')
 
     def _on_coef_change(self):
         v = self.coef_var.get()

@@ -1,1 +1,6 @@
+# 经典模式
 Pillow
+# AI 自校准模式（窗口级抓图 + OpenCV 感知）
+numpy
+opencv-python
+mss
