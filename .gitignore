@@ -26,4 +26,6 @@ Thumbs.db
 debug_samples/
 ai_calibration.json
 ai_calibration.json.tmp
+ai_calibration.json.bad.json
 vision_config.json
+logs/

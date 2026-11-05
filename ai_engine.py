@@ -45,7 +45,29 @@ class AIJumpEngine(threading.Thread):
             state_path, base_factor=base_coefficient)
         self.env = EnvironmentMonitor(head_diameter=head_diameter)
         self.cfg = cfg or VisionConfig.load()
-        self.on_log = on_log or (lambda s: print("[AI]", s))
+        user_log = on_log or (lambda s: print("[AI]", s))
+        self._log_file = None
+        try:
+            log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs")
+            os.makedirs(log_dir, exist_ok=True)
+            self._log_file = open(os.path.join(
+                log_dir, "ai_%s.log" % time.strftime("%Y%m%d")), "a", encoding="utf-8")
+        except Exception:
+            pass
+
+        def _log(msg):
+            try:
+                user_log(msg)
+            except Exception:
+                pass
+            if self._log_file:
+                try:
+                    self._log_file.write("[%s] %s\n" % (time.strftime("%H:%M:%S"), msg))
+                    self._log_file.flush()
+                except Exception:
+                    pass
+
+        self.on_log = _log
         self.on_frame = on_frame or (lambda img: None)
         self.on_stats = on_stats or (lambda d: None)
         self.on_count = on_count or (lambda n: None)
@@ -133,8 +155,13 @@ class AIJumpEngine(threading.Thread):
     def run(self):
         self._running = True
         s0 = self.calibrator.stats()
-        self.on_log("AI 模式启动 | 沿用原版公式 | 基准系数 %.3f 当前系数 %.3f | 已有样本 %d" %
-                    (s0["base_factor"], s0["factor"], s0["samples"]))
+        if s0["samples"] > 0:
+            self.on_log("已加载上次学习：系数 %.3f（基准 %.3f）| 样本 %d | 上次偏差 %s | 保存于 %s" %
+                        (s0["factor"], s0["base_factor"], s0["samples"],
+                         ("%+.0fpx" % s0["ewma_err"]) if s0["ewma_err"] is not None else "--",
+                         s0.get("loaded_at") or "未知"))
+        else:
+            self.on_log("首次运行：从原版公式 + 系数 %.3f 开始" % s0["factor"])
         self.on_log("截图方式: %s" % ("窗口级 PrintWindow（与窗口在屏幕哪个位置无关）"
                                       if self.hwnd else "屏幕区域（建议先选窗口以启用窗口级抓图）"))
         misses = 0
@@ -249,6 +276,11 @@ class AIJumpEngine(threading.Thread):
             self.calibrator.save()
             if self._screen:
                 self._screen.close()
+            if self._log_file:
+                try:
+                    self._log_file.close()
+                except Exception:
+                    pass
             self._running = False
             s = self.calibrator.stats()
             self.on_log("AI 引擎结束 | 共 %d 跳 | 系数 %.3f (基准 %.3f) | 样本 %d | 跳飞保护 %d 次" %

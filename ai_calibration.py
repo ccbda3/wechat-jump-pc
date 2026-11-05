@@ -13,7 +13,9 @@
 import json
 import math
 import os
+import shutil
 import threading
+import time
 
 MIN_PRESS_MS = 200.0
 MAX_PRESS_MS = 1200.0          # 硬上限：原版典型值约 650ms，超过 1.2s 基本是识别异常
@@ -49,6 +51,7 @@ class AdaptiveCoefficient:
         self._ewma_err = None
         self.history = []
         self.last_action = "init"
+        self.loaded_at = None          # 上次保存时间（来自模型文件）
         if path:
             self._load()
 
@@ -149,6 +152,7 @@ class AdaptiveCoefficient:
                 "overshoots": self.overshoots,
                 "ewma_err": None if self._ewma_err is None else round(self._ewma_err, 1),
                 "last_action": self.last_action,
+                "loaded_at": self.loaded_at,
                 "recent": self.history[-5:],
             }
 
@@ -158,7 +162,8 @@ class AdaptiveCoefficient:
             data = {"factor": self.factor, "base_factor": self.base_factor,
                     "samples": self.samples, "rejected": self.rejected,
                     "overshoots": self.overshoots, "ewma_err": self._ewma_err,
-                    "history": self.history[-20:]}
+                    "history": self.history[-20:],
+                    "updated_at": time.strftime("%Y-%m-%d %H:%M:%S")}
             tmp = self.path + ".tmp"
             with open(tmp, "w", encoding="utf-8") as f:
                 json.dump(data, f)
@@ -184,9 +189,10 @@ class AdaptiveCoefficient:
             self.overshoots = int(data.get("overshoots", 0))
             self._ewma_err = data.get("ewma_err")
             self.history = data.get("history", [])
-            # 旧版本把「结算页」误当跳飞，会连乘 0.85 把系数越拉越低。
-            # 样本很少却大幅偏离基准的记录一定是脏数据，直接回到基准。
-            if self.samples < 3 and abs(self.factor / self.base_factor - 1.0) > 0.20:
+            self.loaded_at = data.get("updated_at")
+            # 只修「被旧版本误回拉压到基准 80% 以下」的脏记录；
+            # 正常学习是往上走的，绝不能被这条规则重置，否则每次重开都白学。
+            if self.samples < 3 and self.factor < self.base_factor * 0.80:
                 self.factor = self.base_factor
                 self.overshoots = 0
                 self.rejected = 0
@@ -194,7 +200,12 @@ class AdaptiveCoefficient:
                 self._ewma_err = None
                 self.last_action = "reset_unreliable"
         except Exception:
-            pass
+            # 文件损坏时先留个备份，不要静默丢掉用户的学习结果
+            try:
+                if self.path and os.path.exists(self.path):
+                    shutil.copy2(self.path, self.path + ".bad.json")
+            except Exception:
+                pass
 
     @classmethod
     def load(cls, path, base_factor=2.0, **kwargs):

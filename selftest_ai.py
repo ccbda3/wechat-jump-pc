@@ -270,6 +270,44 @@ def test_gui():
     app.root.destroy()
 
 
+def test_persistence():
+    """学习结果必须跨重启保留；正常上涨不能被误重置。"""
+    import json
+    import shutil
+    import tempfile
+    from ai_calibration import AdaptiveCoefficient, legacy_press_ms
+    tmpdir = tempfile.mkdtemp(prefix="wj_persist_")
+    path = os.path.join(tmpdir, "calib.json")
+    base = legacy_press_ms(300, 77, 1.0)
+    c = AdaptiveCoefficient(path=path, base_factor=2.0)
+    for _ in range(6):
+        t = c.predict(base)
+        c.observe(t, 300 * 1.12, 300, base, confidence=0.9)
+    c.save()
+    c2 = AdaptiveCoefficient.load(path, base_factor=2.0)
+    check("持久化：重启后系数、样本数、保存时间都保留",
+          abs(c2.stats()["factor"] - c.stats()["factor"]) < 1e-6
+          and c2.samples == c.samples and bool(c2.stats()["loaded_at"]),
+          "k=%.3f samples=%d saved=%s" %
+          (c2.stats()["factor"], c2.samples, c2.stats()["loaded_at"]))
+
+    p2 = os.path.join(tmpdir, "up.json")
+    with open(p2, "w", encoding="utf-8") as f:
+        json.dump({"factor": 2.50, "base_factor": 2.0, "samples": 2}, f)
+    c3 = AdaptiveCoefficient.load(p2, base_factor=2.0)
+    check("持久化：正常上涨的系数不会被误重置",
+          abs(c3.stats()["factor"] - 2.50) < 1e-6, "k=%.3f" % c3.stats()["factor"])
+
+    p3 = os.path.join(tmpdir, "bad.json")
+    with open(p3, "w", encoding="utf-8") as f:
+        json.dump({"factor": 1.477, "base_factor": 2.0, "samples": 1,
+                   "overshoots": 2}, f)
+    c4 = AdaptiveCoefficient.load(p3, base_factor=2.0)
+    check("持久化：被旧版压低的脏记录仍会修回基准",
+          abs(c4.stats()["factor"] - 2.0) < 1e-6, "k=%.3f" % c4.stats()["factor"])
+    shutil.rmtree(tmpdir, ignore_errors=True)
+
+
 def test_camera_compensation():
     """相机跟随棋子移动时，真实位移 = 棋子画面位移 - 背景平移。"""
     from ai_vision import estimate_shift
@@ -335,7 +373,7 @@ def main():
     t0 = time.time()
     for fn in (test_vision, test_calibration, test_precise_press,
                test_environment, test_game_over_behavior, test_engine,
-               test_gui, test_camera_compensation,
+               test_gui, test_persistence, test_camera_compensation,
                test_window_position_independence, test_window_grab):
         try:
             fn()
