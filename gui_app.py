@@ -294,7 +294,8 @@ class JumpGUI:
         frm_ai.pack(fill=tk.X, pady=(0, 8))
         ttk.Checkbutton(frm_ai, text='启用 AI 模式（自动学习按压时长）',
                         variable=self.ai_mode).pack(anchor=tk.W)
-        ttk.Label(frm_ai, text='首跳沿用上方系数与原版公式，只按环境微调 ±40%',
+        ttk.Label(frm_ai, text='首跳＝原版识别＋原版公式（头部直径按窗口宽/8 自动算），'
+                              '之后只微调 ±40%',
                   font=('Microsoft YaHei UI', 7), wraplength=290,
                   foreground='#7f849c').pack(anchor=tk.W, pady=(2, 0))
         self.ai_stats_label = ttk.Label(frm_ai, textvariable=self.ai_stats_text,
@@ -559,7 +560,7 @@ class JumpGUI:
                 window_rect=window_rect, hwnd=hwnd,
                 screen_region=self.game_region,
                 base_coefficient=self.coef_var.get(),
-                head_diameter=self.hd_var.get(),
+                head_diameter=None,   # AI 模式按客户区宽/8 自动算，与原版 gw/8 一致
                 on_log=lambda s: self.update_queue.put(('log', s)),
                 on_frame=lambda img: self.update_queue.put(('frame', img)),
                 on_stats=lambda d: self.update_queue.put(('aistats', d)),

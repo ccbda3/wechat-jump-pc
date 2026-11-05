@@ -5,13 +5,17 @@
 和原版唯一的区别是：按压时长 = 原版公式 × 一个在线微调的系数 k。
 首跳 k 就等于用户当前滑块值，所以第一跳与经典模式完全一致，不会冷启动跳飞。
 """
+import math
 import os
 import random
 import threading
 import time
 
+import numpy as np
+
 from ai_calibration import AdaptiveCoefficient, legacy_press_ms
-from ai_control import ScreenGrabber, grab_window, precise_press, to_pil
+from ai_control import (ScreenGrabber, client_area, client_rect_screen,
+                        grab_window, precise_press, to_pil)
 from ai_environment import EnvironmentMonitor
 from ai_vision import VisionConfig, analyze, annotate, is_settled
 
@@ -76,7 +80,12 @@ class AIJumpEngine(threading.Thread):
             return self.frame_source()
         if self.hwnd:
             try:
-                return grab_window(self.hwnd)
+                full = grab_window(self.hwnd)
+                # 裁掉标题栏，只保留客户区：原版公式与 head_diameter 都基于客户区
+                ox, oy, cw, ch = client_area(self.hwnd)
+                if cw > 20 and ch > 20:
+                    return np.ascontiguousarray(full[oy:oy + ch, ox:ox + cw])
+                return full
             except Exception as e:
                 self.on_log("窗口抓图失败(%s)，回退屏幕抓图" % e)
         if self._screen is None:
@@ -84,7 +93,10 @@ class AIJumpEngine(threading.Thread):
         return self._screen.grab(self.screen_region or self.window_rect)
 
     def _click_point(self):
-        l, t, r, b = self.window_rect
+        if self.hwnd:
+            l, t, r, b = client_rect_screen(self.hwnd)
+        else:
+            l, t, r, b = self.screen_region or self.window_rect
         w, h = r - l, b - t
         return (int(l + w * random.uniform(0.35, 0.65)),
                 int(t + h * random.uniform(0.55, 0.78)))
@@ -122,7 +134,8 @@ class AIJumpEngine(threading.Thread):
                     self.on_log("窗口尺寸变为 %dx%d，head_diameter 重算为 %.0fpx" %
                                 (state.width, state.height, state.head_diameter))
 
-                res = analyze(frame, self.cfg)
+                # 原版识别算法优先：第一跳与原脚本完全一致，AI 只在其结果上微调
+                res = analyze(frame, self.cfg, prefer="legacy")
                 if res.game_over:
                     # 一局结束不等于跳飞：不动系数、不退出程序，蹲着等下一局。
                     # 启停完全交给 GUI 的开始/停止按钮。
@@ -144,6 +157,14 @@ class AIJumpEngine(threading.Thread):
                 misses = 0
 
                 d_req = res.distance
+                # 距离合理性：识别到离谱距离时宁可不跳，也不按住一两秒
+                diag = math.hypot(frame.shape[1], frame.shape[0])
+                if d_req < 30 or d_req > 0.72 * diag:
+                    self.on_log("第%02d跳 目标距离异常(%.0fpx, 识别=%s)，跳过不点击" %
+                                (self.jumps + 1, d_req, res.method))
+                    time.sleep(0.3)
+                    continue
+
                 # 关键：以原版公式为基线，只乘一个被限幅的自适应系数
                 base_unit = legacy_press_ms(d_req, state.head_diameter, 1.0)
                 k = self.calibrator.stats()["factor"]
@@ -157,7 +178,7 @@ class AIJumpEngine(threading.Thread):
                     (k, self.calibrator.stats()["base_factor"], self.calibrator.samples)])))
 
                 self._wait_settled(frame)
-                after = analyze(self._grab(), self.cfg)
+                after = analyze(self._grab(), self.cfg, prefer="legacy")
 
                 if after.piece and not after.game_over:
                     vx = after.piece[0] - res.piece[0]
@@ -169,9 +190,11 @@ class AIJumpEngine(threading.Thread):
                     ok, reason, err = self.calibrator.observe(
                         actual_t, d_act, d_req, base_unit, confidence=conf)
                     if ok:
-                        self.on_log("第%02d跳 目标%.0fpx 实跳%.0fpx 偏差%+.0fpx 按压%.0fms k=%.3f" %
-                                    (self.jumps + 1, d_req, d_act, err, actual_t,
-                                     self.calibrator.stats()["factor"]))
+                        self.on_log("第%02d跳 [%s conf=%.2f] 目标%.0fpx 实跳%.0fpx 偏差%+.0fpx"
+                                    " | hd=%.0f base=%.0f k=%.3f t=%.0fms" %
+                                    (self.jumps + 1, res.method, res.confidence, d_req,
+                                     d_act, err, state.head_diameter, base_unit,
+                                     self.calibrator.stats()["factor"], actual_t))
                     else:
                         self.on_log("第%02d跳 偏差%+.0fpx | %s，k=%.3f" %
                                     (self.jumps + 1, err if err is not None else 0,

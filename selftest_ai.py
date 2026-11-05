@@ -50,7 +50,8 @@ def synthetic_frame(piece=(200, 820), board=(430, 690)):
 
 
 def test_vision():
-    from ai_vision import analyze, annotate, is_settled, VisionConfig
+    from ai_vision import (analyze, annotate, detect_piece, is_settled,
+                           VisionConfig)
     frame = synthetic_frame()
     res = analyze(frame)
     ok = (res.piece and res.board and res.method == "cv" and not res.game_over)
@@ -77,6 +78,26 @@ def test_vision():
     check("落稳：相同帧判定静止", is_settled(frame, frame.copy(), cfg))
     moved = synthetic_frame(piece=(300, 700), board=(500, 620))
     check("落稳：画面大幅变化判定未静止", not is_settled(frame, moved, cfg))
+
+    live = os.path.join(ROOT, "debug_samples", "live_client.png")
+    if os.path.exists(live):
+        img = cv2.imread(live)
+        lh = img.shape[0]
+        pr = detect_piece(img, VisionConfig())
+        check("真实画面：OpenCV 不再把底部浅蓝背景当成棋子",
+              pr is None or pr[1] < 0.9 * lh,
+              "piece=%s" % str(pr and tuple(round(v, 1) for v in pr[:2])))
+        rl = analyze(img, prefer="legacy")
+        rc = analyze(img, prefer="cv")
+        check("真实画面：两种识别都给出合理的棋子位置",
+              bool(rl.piece) and rl.piece[1] < 0.9 * lh
+              and bool(rc.piece) and rc.piece[1] < 0.9 * lh,
+              "legacy=%s cv=%s" % (rl.piece, rc.piece))
+        check("真实画面：cv 结果不与 legacy 混用（距离不翻倍）",
+              rl.distance > 0 and rc.distance < rl.distance * 1.6,
+              "legacy d=%.0f  cv d=%.0f" % (rl.distance, rc.distance))
+    else:
+        print("SKIP  真实画面回归（debug_samples/live_client.png 不存在）")
 
     out = annotate(frame, res, ["selftest"])
     check("感知：标注图可生成", out.shape == frame.shape)

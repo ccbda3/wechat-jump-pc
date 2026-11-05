@@ -30,8 +30,9 @@ class VisionConfig:
     # 棋子（紫色小人）：OpenCV HSV，H 取半角 0-179
     piece_h_low: int = 105
     piece_h_high: int = 140
-    piece_s_low: int = 45
+    piece_s_low: int = 60
     piece_v_low: int = 45
+    piece_v_high: int = 200       # 棋子是深紫色；浅蓝背景 V 接近 240，必须排除
     piece_area_ratio_min: float = 0.00015
 
     # 台面：与背景色差异（BGR 三通道 L1 之和）
@@ -98,7 +99,7 @@ def detect_piece(bgr, cfg=None):
     h, w = bgr.shape[:2]
     hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
     lower = np.array([cfg.piece_h_low, cfg.piece_s_low, cfg.piece_v_low], dtype=np.uint8)
-    upper = np.array([cfg.piece_h_high, 255, 255], dtype=np.uint8)
+    upper = np.array([cfg.piece_h_high, 255, cfg.piece_v_high], dtype=np.uint8)
     mask = cv2.inRange(hsv, lower, upper)
     mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, np.ones((5, 5), np.uint8))
@@ -111,6 +112,11 @@ def detect_piece(bgr, cfg=None):
         if area < max(24, w * h * cfg.piece_area_ratio_min):
             continue
         if not (0.20 * h < y + bh / 2 < 0.92 * h):
+            continue
+        # 真实画面里底部浅蓝渐变会被误当成大片"棋子"，这些形状约束专门挡它
+        if bh > 0.30 * h or bw > 0.35 * w or area > 0.05 * w * h:
+            continue
+        if y + bh > 0.95 * h:
             continue
         aspect = bw / max(bh, 1)
         if not (0.25 < aspect < 3.5):
@@ -239,14 +245,26 @@ def legacy_locate(bgr):
 
 # ── 统一入口 ────────────────────────────────────────────────
 
-def analyze(bgr, cfg=None):
-    """分析一帧，返回 FrameResult。"""
+def analyze(bgr, cfg=None, prefer="cv"):
+    """分析一帧，返回 FrameResult。
+
+    prefer="legacy" 时优先使用原版识别算法（RGB 扫棋子 + 边缘扫台面 +
+    固定斜率推 Y），保证第一跳与原脚本完全一致；OpenCV 只在原版失败时兜底。
+    """
     cfg = cfg or VisionConfig.load()
     piece_raw = detect_piece(bgr, cfg)
     piece = (piece_raw[0], piece_raw[1]) if piece_raw else None
     game_over = detect_game_over(bgr, piece_raw is not None)
     if game_over:
         return FrameResult(piece=piece, game_over=True, method="game_over")
+
+    if prefer == "legacy":
+        legacy = legacy_locate(bgr)
+        if legacy:
+            lp, lb = legacy
+            return FrameResult(piece=lp, board=lb,
+                               distance=math.hypot(lb[0] - lp[0], lb[1] - lp[1]),
+                               confidence=0.8, method="legacy")
 
     board_raw = detect_board(bgr, piece_raw, cfg)
     board = (board_raw[0], board_raw[1]) if board_raw else None
@@ -255,14 +273,17 @@ def analyze(bgr, cfg=None):
     if piece and board:
         conf = min(piece_raw[2], board_raw[2])
         method = "cv"
-    elif piece is None or board is None:
+    else:
+        # cv 只成功一半时绝不与 legacy 混用：曾把底部浅蓝背景误检成棋子，
+        # 再配上 legacy 的台面坐标，距离直接翻倍 → 持续按住跳飞。
         legacy = legacy_locate(bgr)
         if legacy:
-            lp, lb = legacy
-            piece = piece or lp
-            board = board or lb
-            conf = 0.35
+            piece, board = legacy
+            conf = 0.6
             method = "legacy"
+        else:
+            board = None
+            method = "failed"
     if piece and board:
         d = math.hypot(board[0] - piece[0], board[1] - piece[1])
         return FrameResult(piece=piece, board=board, distance=d,

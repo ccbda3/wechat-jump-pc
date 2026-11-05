@@ -179,3 +179,29 @@ def to_pil(bgr):
 
 def bgr_to_pil_rgb(bgr):
     return to_pil(bgr)
+
+
+class POINT(ctypes.Structure):
+    _fields_ = [("x", ctypes.c_long), ("y", ctypes.c_long)]
+
+
+def client_area(hwnd):
+    """客户区相对窗口左上角的偏移与尺寸 (ox, oy, cw, ch)。
+
+    PrintWindow 抓的是整窗（含标题栏），而原版公式、head_diameter=客户区宽/8
+    都基于客户区。识别前必须裁掉标题栏，才能和原版脚本完全对齐。
+    """
+    wl, wt, _, _ = get_window_rect(hwnd)
+    cr = RECT()
+    user32.GetClientRect(hwnd, ctypes.byref(cr))
+    pt = POINT()
+    user32.ClientToScreen(hwnd, ctypes.byref(pt))
+    return (int(pt.x - wl), int(pt.y - wt),
+            int(cr.right - cr.left), int(cr.bottom - cr.top))
+
+
+def client_rect_screen(hwnd):
+    """客户区的屏幕坐标矩形 (left, top, right, bottom)。"""
+    wl, wt, _, _ = get_window_rect(hwnd)
+    ox, oy, cw, ch = client_area(hwnd)
+    return (wl + ox, wt + oy, wl + ox + cw, wt + oy + ch)

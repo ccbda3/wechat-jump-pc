@@ -16,7 +16,7 @@ import os
 import threading
 
 MIN_PRESS_MS = 200.0
-MAX_PRESS_MS = 1400.0          # 硬上限：原版典型值约 650ms，正常绝不会触顶
+MAX_PRESS_MS = 1200.0          # 硬上限：原版典型值约 650ms，超过 1.2s 基本是识别异常
 
 
 def legacy_press_ms(distance_px, head_diameter, coefficient=1.0):
