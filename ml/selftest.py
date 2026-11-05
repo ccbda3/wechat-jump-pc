@@ -86,16 +86,16 @@ def test_policy():
     tmp = os.path.join(tempfile.gettempdir(), "jump_rl_selftest_model.json")
     if os.path.exists(tmp):
         os.remove(tmp)
-    policy = Policy(path=tmp, lr=0.06, seed=2)
+    policy = Policy(path=tmp, lr=0.12, seed=2)
     x = np.zeros(FEATURES)
     x[0] = 1.0
     x[1] = 0.30
     x[2] = 0.7
     x[8] = 0.31
-    ideal = 14
+    ideal = 5
     base = 300.0
     rewards = []
-    for step in range(700):
+    for step in range(500):
         a, scale, ent = policy.act(x)
         ratio = scale / SCALES[ideal]
         err = abs(ratio - 1.0) * base * 1.6

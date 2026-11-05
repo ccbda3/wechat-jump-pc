@@ -9,9 +9,8 @@ KEYWORDS = [
 ]
 
 OVER_WORDS = ["本次得分", "历史最高分", "游戏结束", "挑战失败", "再玩一局"]
-LIST_WORDS = ["好友排行", "排行榜", "每周一凌晨刷新", "我的排名", "查看全部排行",
-              "本周最高分", "精彩回放", "用键鼠玩游戏", "添加到桌面", "置顶小程序",
-              "已开启声音", "福利", "更多游戏"]
+LIST_WORDS = ["好友排行榜", "查看群排行", "我的排名", "查看全部排行",
+              "每周一凌晨刷新", "本周最高分", "精彩回放"]
 
 
 class OcrReader:
@@ -80,10 +79,6 @@ class OcrReader:
                 if kw in t:
                     return {"found": 1, "kind": "start", "x": float(cx),
                             "y": float(cy), "text": t, "source": "ocr"}
-        if listed:
-            h, w = bgr.shape[:2]
-            return {"found": 1, "kind": "list", "x": w * 0.06,
-                    "y": h * 0.055, "text": "排行榜", "source": "ocr"}
         if over:
             if allow_shape:
                 box = find_button(bgr)
@@ -92,6 +87,13 @@ class OcrReader:
                             "y": float(box[1]), "text": "结算按钮", "source": "shape"}
             return {"found": 1, "kind": "over", "x": None, "y": None,
                     "text": "结算页", "source": "ocr"}
+        if listed:
+            box = find_round_back(bgr)
+            if box:
+                return {"found": 1, "kind": "list", "x": float(box[0]),
+                        "y": float(box[1]), "text": "排行榜返回", "source": "arrow"}
+            return {"found": 1, "kind": "list", "x": None, "y": None,
+                    "text": "排行榜", "source": "ocr"}
         if allow_shape:
             box = find_button(bgr)
             if box:
@@ -103,27 +105,85 @@ class OcrReader:
         return " ".join(t for t, *_ in self.read(bgr))
 
 
-def find_button(bgr):
+def game_crop(frame):
+    h, w = frame.shape[:2]
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    cm = gray.mean(axis=0)
+    if cm[:max(1, int(w * 0.10))].mean() < 235:
+        return frame, 0
+    limit = int(w * 0.72)
+    for x in range(int(w * 0.15), limit):
+        if cm[x] < 228 and cm[x:x + 24].mean() < 222:
+            x0 = min(x + 6, w - 8)
+            return frame[:, x0:w - 6], x0
+    return frame, 0
+
+
+def bg_color(bgr):
+    small = cv2.resize(bgr, (max(1, bgr.shape[1] // 4), max(1, bgr.shape[0] // 4)),
+                       interpolation=cv2.INTER_AREA)
+    q = (small // 16) * 16
+    keys = (q[:, :, 0].astype(np.int64) * 65536 +
+            q[:, :, 1].astype(np.int64) * 256 + q[:, :, 2].astype(np.int64))
+    vals, counts = np.unique(keys, return_counts=True)
+    sel = keys == vals[int(np.argmax(counts))]
+    return np.median(small[sel], axis=0).astype(np.int16)
+
+
+def find_round_back(bgr):
     h, w = bgr.shape[:2]
     gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
-    mask = (gray > 215).astype(np.uint8)
-    top = int(h * 0.40)
-    roi = mask[top:, :]
+    mask = (gray > 235).astype(np.uint8)
+    top = int(h * 0.78)
+    left = int(w * 0.35)
+    right = int(w * 0.95)
+    roi = mask[top:, left:right]
     n, labels, stats, cents = cv2.connectedComponentsWithStats(roi, 8)
     best = None
     for i in range(1, n):
         x, y, bw, bh, area = [int(v) for v in stats[i]]
-        if bw < 0.22 * w or bh < 0.028 * h or bh > 0.22 * h:
+        if bw < 0.024 * w or bw > 0.095 * w:
             continue
-        if area < 0.006 * w * h:
+        if bh < 0.024 * w or bh > 0.095 * w:
+            continue
+        ar = bw / max(bh, 1)
+        if ar < 0.85 or ar > 1.20:
+            continue
+        if area < 0.62 * bw * bh:
+            continue
+        if best is None or area > best[0]:
+            best = (area, x, y, bw, bh)
+    if best is None:
+        return None
+    _, x, y, bw, bh = best
+    return (left + x + bw / 2.0, top + y + bh / 2.0)
+
+
+def find_button(bgr):
+    sub, x0 = game_crop(bgr)
+    h, w = sub.shape[:2]
+    gray = cv2.cvtColor(sub, cv2.COLOR_BGR2GRAY)
+    mask = (gray > 225).astype(np.uint8)
+    n, labels, stats, cents = cv2.connectedComponentsWithStats(mask, 8)
+    best = None
+    for i in range(1, n):
+        x, y, bw, bh, area = [int(v) for v in stats[i]]
+        if bw < 0.12 * w or bw > 0.50 * w:
+            continue
+        if bh < 0.025 * h or bh > 0.10 * h:
             continue
         aspect = bw / max(bh, 1)
-        if aspect < 1.8 or aspect > 12.0:
+        if aspect < 2.2 or aspect > 7.0:
             continue
-        score = area * (1.0 if 2.2 < aspect < 7.0 else 0.6)
+        if area < 0.60 * bw * bh:
+            continue
+        cy = y + bh / 2.0
+        if cy < 0.45 * h or cy > 0.90 * h:
+            continue
+        score = area
         if best is None or score > best[0]:
             best = (score, x, y, bw, bh)
     if best is None:
         return None
     _, x, y, bw, bh = best
-    return (x + bw / 2.0, y + bh / 2.0 + top)
+    return (x0 + x + bw / 2.0, y + bh / 2.0)

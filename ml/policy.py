@@ -7,8 +7,8 @@ import numpy as np
 
 FEATURES = 10
 HIDDEN = 24
-ACTIONS = 21
-SCALES = np.array([0.40 + 0.05 * i for i in range(ACTIONS)])
+ACTIONS = 11
+SCALES = np.array([0.80 + 0.04 * i for i in range(ACTIONS)])
 MIN_PRESS_MS = 140.0
 MAX_PRESS_MS = 1150.0
 
@@ -22,15 +22,14 @@ def legacy_press_ms(distance_px, head_diameter, coefficient=1.0):
 
 
 class Policy:
-    def __init__(self, path=None, lr=0.03, seed=1, baseline=0.55):
+    def __init__(self, path=None, lr=0.10, seed=1, baseline=0.55):
         self.path = path
         self.lr = float(lr)
         self.rng = np.random.default_rng(seed)
         self.w1 = self.rng.normal(0.0, 0.12, (HIDDEN, FEATURES))
         self.b1 = np.zeros(HIDDEN)
         self.w2 = self.rng.normal(0.0, 0.04, (ACTIONS, HIDDEN))
-        self.b2 = np.zeros(ACTIONS)
-        self.b2[12] = 0.35
+        self.b2 = np.exp(-((np.arange(ACTIONS) - 5.0) / 2.2) ** 2) * 1.6
         self.baseline = float(baseline)
         self.jumps = 0
         self.episodes = 0
@@ -64,7 +63,7 @@ class Policy:
         self.last_scale = float(SCALES[a])
         return a, float(SCALES[a]), ent
 
-    def update(self, x, action, reward, entropy_bonus=0.01):
+    def update(self, x, action, reward, entropy_bonus=0.004):
         h, p = self.forward(x)
         adv = float(reward) - self.baseline
         adv = max(-1.5, min(1.5, adv))
@@ -79,9 +78,9 @@ class Policy:
         self.b2 += self.lr * g
         self.w1 += self.lr * np.outer(dh, x)
         self.b1 += self.lr * dh
-        self.w1 *= 0.9995
-        self.w2 *= 0.9995
-        self.baseline += 0.06 * (float(reward) - self.baseline)
+        self.w1 *= 0.9997
+        self.w2 *= 0.9997
+        self.baseline += 0.10 * (float(reward) - self.baseline)
         self.jumps += 1
         self.total_reward += float(reward)
         self.last_reward = float(reward)

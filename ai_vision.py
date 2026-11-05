@@ -158,12 +158,11 @@ def detect_board(bgr, piece, cfg=None):
 
     n, labels, stats, cents = cv2.connectedComponentsWithStats(mask, 8)
     px = piece[0] if piece is not None else w / 2.0
-    side = 1 if px < w / 2.0 else -1
     best = None
     for i in range(1, n):
         x, y, bw, bh, area = [int(v) for v in stats[i]]
         ar = area / float(w * h)
-        if not (cfg.board_area_ratio_min < ar < cfg.board_area_ratio_max):
+        if ar < 0.008 or ar > cfg.board_area_ratio_max:
             continue
         if not (w * cfg.board_w_min_ratio < bw < w * cfg.board_w_max_ratio):
             continue
@@ -172,22 +171,18 @@ def detect_board(bgr, piece, cfg=None):
         aspect = bw / max(bh, 1)
         if not (0.7 < aspect < 7.0):
             continue
-        cx, cy = float(cents[i][0]), float(cents[i][1])
-        if (cx - px) * side < w * 0.06:      # 必须在棋子的对侧半边
+        cx = float(cents[i][0])
+        if abs(cx - px) < w * 0.06:
             continue
-        if abs(cx - px) < w * 0.08:
-            continue
-        score = ar * 100.0
-        score *= 1.0 + 0.25 * max(0.0, 1.0 - abs(aspect - 2.2) / 4.0)
-        score /= 1.0 + 0.35 * abs(cx - px) / w
-        if score > (best[0] if best else -1):
-            best = (score, x, y, bw, bh, cx, cy)
+        score = float(y) - area / float(w * h) * h
+        if best is None or score < best[0]:
+            best = (score, x, y, bw, bh, cx)
     if best is None:
         return None
-    _, x, y, bw, bh, cx, cy = best
+    _, x, y, bw, bh, cx = best
     # 立体方块的落脚点在顶面中心（轮廓上部约 30% 处），而非整个连通域质心
     board_y = y + bh * 0.30
-    conf = min(1.0, 0.5 + best[0] * 1.5)
+    conf = min(1.0, 0.55 + bw / float(w) * 0.6)
     return (cx, board_y, conf, (x, y, bw, bh))
 
 

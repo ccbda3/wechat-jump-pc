@@ -9,11 +9,12 @@ sys.path.insert(0, ROOT)
 PROTO = sys.stdout.buffer
 sys.stdout = sys.stderr
 
+import cv2
 import numpy as np
 
 from ai_vision import VisionConfig, analyze, detect_game_over
 from policy import (MAX_PRESS_MS, MIN_PRESS_MS, Policy, legacy_press_ms)
-from ocr import OcrReader
+from ocr import OcrReader, game_crop
 from landing import landing_reward
 
 MODEL_PATH = os.path.join(ROOT, "ml_model.json")
@@ -35,11 +36,13 @@ def log(msg):
         pass
 
 
-def features(res, w, h, base_unit, prev_reward):
+def features(res, w, h, base_unit, prev_reward, x0=0):
     d = res.distance
     diag = math.hypot(w, h)
     px, py = res.piece
     bx, by = res.board
+    px -= x0
+    bx -= x0
     return np.array([
         1.0,
         d / diag,
@@ -52,6 +55,20 @@ def features(res, w, h, base_unit, prev_reward):
         min(base_unit / 1000.0, 1.5),
         float(prev_reward),
     ], dtype=np.float64)
+
+
+def analyze_view(cfg, frame):
+    sub, x0 = game_crop(frame)
+    res = analyze(sub, cfg, prefer="legacy")
+    if x0:
+        if res.piece:
+            res.piece = (res.piece[0] + x0, res.piece[1])
+        if res.board:
+            res.board = (res.board[0] + x0, res.board[1])
+        if res.distance:
+            res.distance = math.hypot(res.board[0] - res.piece[0],
+                                      res.board[1] - res.piece[1])
+    return res, sub, x0
 
 
 def det_of(res, over, reward=None, err=None, text=None):
@@ -172,13 +189,16 @@ class Runner:
         return "结算按钮"
 
     def handle_before(self, req, frame, base_coef, greedy):
-        res = analyze(frame, self.cfg, prefer="legacy")
-        over = bool(res.game_over) or detect_game_over(frame)
-        w = frame.shape[1]
+        res, sub, x0 = analyze_view(self.cfg, frame)
+        over = bool(res.game_over) or detect_game_over(sub)
+        w = frame.shape[1] - x0
         h = frame.shape[0]
         now = time.time()
-        want_ocr = (over or self.need_start or res.piece is None
-                    or res.board is None or (now - self.last_ocr) >= 1.0)
+        valid_game = (res.piece is not None and res.board is not None
+                      and res.method != "game_over" and res.confidence >= 0.75)
+        want_ocr = (not valid_game) and (over or self.need_start
+                    or res.piece is None or res.board is None
+                    or (now - self.last_ocr) >= 1.0)
         loc = None
         if want_ocr:
             self.last_ocr = now
@@ -186,6 +206,11 @@ class Runner:
                 frame, allow_shape=(over or res.piece is None or self.need_start))
             kind = loc.get("kind") if loc else None
             if kind == "list":
+                if loc["x"] is None:
+                    self.note_wait("排行榜页未找到返回按钮", res)
+                    emit({"t": "res", "kind": "wait", "det": det_of(res, False),
+                          "stats": self.base_stats()})
+                    return
                 if now - self.last_click < 1.4:
                     emit({"t": "res", "kind": "wait", "det": det_of(res, False),
                           "stats": self.base_stats()})
@@ -250,7 +275,7 @@ class Runner:
             return
         head = max(22.0, w / 8.0)
         base_unit = legacy_press_ms(d, head, 1.0)
-        feat = features(res, w, h, base_unit, self.policy.last_reward)
+        feat = features(res, w, h, base_unit, self.policy.last_reward, x0)
         action, scale, ent = self.policy.act(feat, greedy)
         ms = min(max(base_unit * base_coef * scale, MIN_PRESS_MS), MAX_PRESS_MS)
         self.pending[self.pending_key(req)] = {
@@ -262,7 +287,9 @@ class Runner:
         self.logline("第%02d跳 距离%.0fpx 动作%d 系数%.2f 按压%.0fms 熵%.2f"
                      % (self.jumps_in_episode + 1, d, action, scale, ms, ent))
         emit({"t": "res", "kind": "press", "ms": ms, "action": action,
-              "scale": scale, "entropy": ent, "det": det_of(res, False),
+              "scale": scale, "entropy": ent,
+              "x": float(x0) + w * 0.5, "y": float(h) * 0.68,
+              "det": det_of(res, False),
               "stats": self.base_stats()})
 
     def pending_key(self, req):
@@ -274,8 +301,8 @@ class Runner:
         if info is None:
             emit({"t": "res", "kind": "wait", "stats": self.base_stats()})
             return
-        after = analyze(frame, self.cfg, prefer="legacy")
-        over = bool(after.game_over) or detect_game_over(frame)
+        after, sub_after, ax0 = analyze_view(self.cfg, frame)
+        over = bool(after.game_over) or detect_game_over(sub_after)
         if over or after.piece is None:
             self.policy.update(info["feat"], info["action"], 0.0)
             self.logline("跳跃失败：奖励 0.00")
@@ -301,7 +328,8 @@ class Runner:
             emit({"t": "res", "kind": "ok", "reward": None,
                   "det": det_of(after, False), "stats": self.base_stats()})
             return
-        reward, err, block = landing_reward(frame, after.piece)
+        reward, err, block = landing_reward(
+            sub_after, (after.piece[0] - ax0, after.piece[1]))
         if reward is None:
             self.logline("没有找到落点方砖，本跳不学习")
             emit({"t": "res", "kind": "ok", "reward": None,

@@ -606,7 +606,14 @@ static DWORD WINAPI worker_main(LPVOID param) {
         apply_stats(&res.st);
         if (strcmp(res.kind, "press") == 0 && res.has_ms) {
             int sx = 0, sy = 0;
-            random_point(hwnd, &sx, &sy);
+            POINT cpt = {0, 0};
+            ClientToScreen(hwnd, &cpt);
+            if (res.has_x && res.has_y) {
+                sx = cpt.x + (int)res.x;
+                sy = cpt.y + (int)res.y;
+            } else {
+                random_point(hwnd, &sx, &sy);
+            }
             press_hold(sx, sy, res.ms);
             int stable = wait_stable(hwnd, &prev, &cur, 3.2);
             if (!grab_frame(hwnd, &after)) {
