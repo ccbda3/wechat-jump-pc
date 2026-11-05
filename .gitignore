@@ -33,4 +33,4 @@ logs/
 # 强化学习本地产物
 ml_model.json
 ml_model.json.tmp
-native/build/
+native/build/*.o
