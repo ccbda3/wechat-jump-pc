@@ -17,3 +17,7 @@ config/pc_region.json
 # 系统
 .DS_Store
 Thumbs.db
+
+# 本地部署环境
+.venv/
+*.log
