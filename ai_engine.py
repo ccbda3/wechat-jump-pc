@@ -17,7 +17,8 @@ from ai_calibration import AdaptiveCoefficient, legacy_press_ms
 from ai_control import (ScreenGrabber, client_area, client_rect_screen,
                         grab_window, precise_press, to_pil)
 from ai_environment import EnvironmentMonitor
-from ai_vision import VisionConfig, analyze, annotate, is_settled
+from ai_vision import (VisionConfig, analyze, annotate, estimate_shift,
+                       is_settled)
 
 DEFAULT_STATE_PATH = "ai_calibration.json"
 
@@ -207,27 +208,35 @@ class AIJumpEngine(threading.Thread):
                     (k, self.calibrator.stats()["base_factor"], self.calibrator.samples)])))
 
                 self._wait_settled(frame)
-                after = analyze(self._grab(), self.cfg, prefer="legacy")
+                after_frame = self._grab()
+                after = analyze(after_frame, self.cfg, prefer="legacy")
 
                 if after.piece and not after.game_over:
-                    vx = after.piece[0] - res.piece[0]
-                    vy = after.piece[1] - res.piece[1]
-                    ux = (res.board[0] - res.piece[0]) / max(d_req, 1e-6)
-                    uy = (res.board[1] - res.piece[1]) / max(d_req, 1e-6)
-                    d_act = vx * ux + vy * uy          # 沿目标方向投影
-                    conf = min(res.confidence, 0.8 if after.confidence == 0 else after.confidence)
-                    ok, reason, err = self.calibrator.observe(
-                        actual_t, d_act, d_req, base_unit, confidence=conf)
-                    if ok:
-                        self.on_log("第%02d跳 [%s conf=%.2f] 目标%.0fpx 实跳%.0fpx 偏差%+.0fpx"
-                                    " | hd=%.0f base=%.0f k=%.3f t=%.0fms" %
-                                    (self.jumps + 1, res.method, res.confidence, d_req,
-                                     d_act, err, state.head_diameter, base_unit,
-                                     self.calibrator.stats()["factor"], actual_t))
+                    # 相机跟随补偿：真实位移 = 棋子画面位移 - 背景平移
+                    dx, dy, resp = estimate_shift(frame, after_frame)
+                    if resp < 0.10:
+                        self.on_log("第%02d跳 相机位移估计不可靠(resp=%.2f)，本轮不学习" %
+                                    (self.jumps + 1, resp))
                     else:
-                        self.on_log("第%02d跳 偏差%+.0fpx | %s，k=%.3f" %
-                                    (self.jumps + 1, err if err is not None else 0,
-                                     reason, self.calibrator.stats()["factor"]))
+                        vx = after.piece[0] - res.piece[0] - dx
+                        vy = after.piece[1] - res.piece[1] - dy
+                        ux = (res.board[0] - res.piece[0]) / max(d_req, 1e-6)
+                        uy = (res.board[1] - res.piece[1]) / max(d_req, 1e-6)
+                        d_act = vx * ux + vy * uy      # 沿目标方向投影
+                        conf = min(res.confidence,
+                                   0.8 if after.confidence == 0 else after.confidence)
+                        ok, reason, err = self.calibrator.observe(
+                            actual_t, d_act, d_req, base_unit, confidence=conf)
+                        if ok:
+                            self.on_log("第%02d跳 [%s cam=(%.0f,%.0f) resp=%.2f] 目标%.0fpx"
+                                        " 实跳%.0fpx 偏差%+.0fpx | hd=%.0f base=%.0f k=%.3f t=%.0fms" %
+                                        (self.jumps + 1, res.method, dx, dy, resp, d_req,
+                                         d_act, err, state.head_diameter, base_unit,
+                                         self.calibrator.stats()["factor"], actual_t))
+                        else:
+                            self.on_log("第%02d跳 偏差%+.0fpx | %s，k=%.3f" %
+                                        (self.jumps + 1, err if err is not None else 0,
+                                         reason, self.calibrator.stats()["factor"]))
                 else:
                     self.on_log("第%02d跳 落点识别失败或已进入结算页，本轮不学习" %
                                 (self.jumps + 1))

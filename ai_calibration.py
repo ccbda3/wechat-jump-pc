@@ -31,8 +31,8 @@ def legacy_press_ms(distance_px, head_diameter, coefficient=1.0):
 class AdaptiveCoefficient:
     """线程安全的在线系数自适应（EWMA + 限幅 + 跳飞保护）。"""
 
-    def __init__(self, path=None, base_factor=2.0, factor=None, beta=0.28,
-                 clamp_low=0.60, clamp_high=1.40, max_step=0.08,
+    def __init__(self, path=None, base_factor=2.0, factor=None, beta=0.18,
+                 clamp_low=0.60, clamp_high=1.40, max_step=0.05,
                  auto_save=True):
         self.path = path
         self.base_factor = float(base_factor)      # 用户在 GUI 里调好的原版系数
@@ -122,6 +122,8 @@ class AdaptiveCoefficient:
             return "implausible"
         if d_act > 1.6 * d_req + 60:
             return "overshoot"           # 跳飞：不学习，立即回拉
+        if abs(d_act - d_req) > 0.40 * d_req:
+            return "noisy"               # 偏差过大，多半是落点测量误差，别拿来学
         return ""
 
     def on_overshoot(self):

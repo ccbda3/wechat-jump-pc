@@ -270,6 +270,22 @@ def test_gui():
     app.root.destroy()
 
 
+def test_camera_compensation():
+    """相机跟随棋子移动时，真实位移 = 棋子画面位移 - 背景平移。"""
+    from ai_vision import estimate_shift
+    np.random.seed(3)
+    img = np.random.randint(0, 255, (400, 600, 3), np.uint8)
+    for true_dx, true_dy in [(140.0, -70.0), (-90.0, 40.0)]:
+        m = np.float32([[1, 0, -true_dx], [0, 1, -true_dy]])
+        shifted = cv2.warpAffine(img, m, (600, 400))
+        dx, dy, resp = estimate_shift(img, shifted)
+        est_dx, est_dy = -dx, -dy          # 相机完全跟随时，棋子画面位移为 0
+        check("落点：相机位移补偿能还原真实跳跃距离",
+              abs(est_dx - true_dx) < 3 and abs(est_dy - true_dy) < 3 and resp > 0.3,
+              "真值(%.0f,%.0f) 估计(%.0f,%.0f) resp=%.2f" %
+              (true_dx, true_dy, est_dx, est_dy, resp))
+
+
 def test_window_position_independence():
     """窗口级截图必须与窗口在屏幕上的位置无关。"""
     import ctypes
@@ -319,7 +335,8 @@ def main():
     t0 = time.time()
     for fn in (test_vision, test_calibration, test_precise_press,
                test_environment, test_game_over_behavior, test_engine,
-               test_gui, test_window_position_independence, test_window_grab):
+               test_gui, test_camera_compensation,
+               test_window_position_independence, test_window_grab):
         try:
             fn()
         except Exception as e:

@@ -291,6 +291,28 @@ def analyze(bgr, cfg=None, prefer="cv"):
     return FrameResult(piece=piece, method="failed")
 
 
+def estimate_shift(prev_bgr, cur_bgr):
+    """估计两帧之间的全局背景平移（相机移动），返回 (dx, dy, response)。
+
+    跳一跳的相机会跟随棋子移动，所以「棋子在画面里的位移」并不等于
+    「棋子实际跳了多远」。真实位移 = 棋子位移 - 背景平移，这个公式
+    在相机完全跟随或完全不跟随两种极端下都成立。
+
+    response 越高越可信；低于 0.1 说明画面变化太大，不要拿它做补偿。
+    """
+    if prev_bgr is None or cur_bgr is None or prev_bgr.shape != cur_bgr.shape:
+        return 0.0, 0.0, 0.0
+    g0 = cv2.cvtColor(prev_bgr, cv2.COLOR_BGR2GRAY).astype(np.float32)
+    g1 = cv2.cvtColor(cur_bgr, cv2.COLOR_BGR2GRAY).astype(np.float32)
+    h, w = g0.shape
+    win = cv2.createHanningWindow((w, h), cv2.CV_32F)
+    try:
+        (dx, dy), resp = cv2.phaseCorrelate(g0, g1, win)
+    except Exception:
+        return 0.0, 0.0, 0.0
+    return float(dx), float(dy), float(resp)
+
+
 def is_settled(prev_bgr, cur_bgr, cfg=None):
     """连续两帧差异足够小 = 棋子已落稳，可以读取落点。"""
     cfg = cfg or VisionConfig.load()
