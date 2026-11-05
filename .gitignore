@@ -29,3 +29,8 @@ ai_calibration.json.tmp
 ai_calibration.json.bad.json
 vision_config.json
 logs/
+
+# 强化学习本地产物
+ml_model.json
+ml_model.json.tmp
+native/build/
