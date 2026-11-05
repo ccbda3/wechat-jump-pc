@@ -17,8 +17,9 @@ import shutil
 import threading
 import time
 
-MIN_PRESS_MS = 200.0
+MIN_PRESS_MS = 120.0           # 近距离需要短按；原版 200ms 下限会让近方块跳远
 MAX_PRESS_MS = 1200.0          # 硬上限：原版典型值约 650ms，超过 1.2s 基本是识别异常
+NEAR_THRESHOLD = 200.0         # 小于这个像素距离视为「近方块」，单独校准
 
 
 def legacy_press_ms(distance_px, head_diameter, coefficient=1.0):
@@ -39,6 +40,7 @@ class AdaptiveCoefficient:
         self.path = path
         self.base_factor = float(base_factor)      # 用户在 GUI 里调好的原版系数
         self.factor = float(factor) if factor is not None else self.base_factor
+        self.near_factor = 1.0          # 近距离乘数：近方块单独学，避免被中远距离的 k 带偏
         self.beta = float(beta)
         self.clamp_low = float(clamp_low)
         self.clamp_high = float(clamp_high)
@@ -64,10 +66,12 @@ class AdaptiveCoefficient:
         return float(min(max(value, self._bounds()[0]), self._bounds()[1]))
 
     # ── 预测 ────────────────────────────────────────────────
-    def predict(self, base_ms_unit):
+    def predict(self, base_ms_unit, distance_px=None):
         """base_ms_unit = legacy_press_ms(d, hd, 1.0)；返回本次按压毫秒。"""
         with self._lock:
             k = self.factor
+            if distance_px is not None and distance_px < NEAR_THRESHOLD:
+                k *= self.near_factor
         return float(min(max(base_ms_unit * k, MIN_PRESS_MS), MAX_PRESS_MS))
 
     def predict_for(self, distance_px, head_diameter):
@@ -101,9 +105,20 @@ class AdaptiveCoefficient:
             # 局部线性近似：想跳 d_req，实际跳了 d_act，则应按 t_used * d_req/d_act
             t_target = t_used * d_req / max(d_act, 1.0)
             k_target = t_target / max(base_ms_unit, 1.0)
-            lo, hi = self.factor * (1 - self.max_step), self.factor * (1 + self.max_step)
-            k_target = min(max(k_target, lo), hi)
-            self.factor = self._clip((1 - self.beta) * self.factor + self.beta * k_target)
+            if d_req < NEAR_THRESHOLD:
+                # 近方块单独学一个乘数，绝不动中远距离已经调好的 k
+                target = k_target / max(self.factor, 1e-6)
+                lo = self.near_factor * (1 - self.max_step)
+                hi = self.near_factor * (1 + self.max_step)
+                target = min(max(target, lo), hi)
+                self.near_factor = min(max((1 - self.beta) * self.near_factor
+                                           + self.beta * target, 0.60), 1.25)
+            else:
+                lo = self.factor * (1 - self.max_step)
+                hi = self.factor * (1 + self.max_step)
+                k_target = min(max(k_target, lo), hi)
+                self.factor = self._clip((1 - self.beta) * self.factor
+                                         + self.beta * k_target)
             self.samples += 1
             self._ewma_err = err if self._ewma_err is None else 0.7 * self._ewma_err + 0.3 * err
             self.history.append((round(d_req, 1), round(d_act, 1),
@@ -146,6 +161,7 @@ class AdaptiveCoefficient:
         with self._lock:
             return {
                 "factor": round(self.factor, 3),
+                "near_factor": round(self.near_factor, 3),
                 "base_factor": round(self.base_factor, 3),
                 "samples": self.samples,
                 "rejected": self.rejected,
@@ -159,7 +175,8 @@ class AdaptiveCoefficient:
     # ── 持久化 ──────────────────────────────────────────────
     def _save_unlocked(self):
         try:
-            data = {"factor": self.factor, "base_factor": self.base_factor,
+            data = {"factor": self.factor, "near_factor": self.near_factor,
+                    "base_factor": self.base_factor,
                     "samples": self.samples, "rejected": self.rejected,
                     "overshoots": self.overshoots, "ewma_err": self._ewma_err,
                     "history": self.history[-20:],
@@ -184,6 +201,7 @@ class AdaptiveCoefficient:
             saved_k = float(data.get("factor", saved_base))
             # 用户后来调过滑块时，把已学结果按比例迁移，而不是从头学
             self.factor = self._clip(self.base_factor * (saved_k / saved_base))
+            self.near_factor = min(max(float(data.get("near_factor", 1.0)), 0.60), 1.25)
             self.samples = int(data.get("samples", 0))
             self.rejected = int(data.get("rejected", 0))
             self.overshoots = int(data.get("overshoots", 0))
@@ -214,6 +232,7 @@ class AdaptiveCoefficient:
     def reset(self):
         with self._lock:
             self.factor = self.base_factor
+            self.near_factor = 1.0
             self.samples = 0
             self.rejected = 0
             self.overshoots = 0

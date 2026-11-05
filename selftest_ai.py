@@ -148,6 +148,32 @@ def test_calibration():
           "%.0fms" % calib.predict(1e6))
 
 
+def test_near_calibration():
+    """近方块要单独学一个乘数，不能沿用中远距离调好的系数。"""
+    from ai_calibration import AdaptiveCoefficient, legacy_press_ms
+    base_near = legacy_press_ms(150, 77, 1.0)
+    c = AdaptiveCoefficient(path=None, base_factor=2.0)
+    k0 = c.stats()["factor"]
+    for _ in range(10):
+        t = c.predict(base_near, 150)
+        c.observe(t, 150 * 1.25, 150, base_near, confidence=0.9)
+    s = c.stats()
+    check("近距离：单独学出更小的乘数，中远距离系数不受影响",
+          s["near_factor"] < 0.98 and abs(s["factor"] - k0) < 1e-9,
+          "near=%.3f k=%.3f" % (s["near_factor"], s["factor"]))
+    near_before = c.stats()["near_factor"]
+    base_far = legacy_press_ms(300, 77, 1.0)
+    for _ in range(5):
+        t = c.predict(base_far, 300)
+        c.observe(t, 300 * 1.05, 300, base_far, confidence=0.9)
+    check("近距离：中远距离样本不会污染近距乘数",
+          abs(c.stats()["near_factor"] - near_before) < 1e-9,
+          "near=%.3f" % c.stats()["near_factor"])
+    check("近距离：近方块按压允许低于原版 200ms 下限",
+          c.predict(legacy_press_ms(80, 77, 1.0), 80) < 200,
+          "%.0fms" % c.predict(legacy_press_ms(80, 77, 1.0), 80))
+
+
 def test_precise_press():
     from ai_control import precise_press
     worst = 0.0
@@ -371,7 +397,7 @@ def test_window_grab():
 
 def main():
     t0 = time.time()
-    for fn in (test_vision, test_calibration, test_precise_press,
+    for fn in (test_vision, test_calibration, test_near_calibration, test_precise_press,
                test_environment, test_game_over_behavior, test_engine,
                test_gui, test_persistence, test_camera_compensation,
                test_window_position_independence, test_window_grab):

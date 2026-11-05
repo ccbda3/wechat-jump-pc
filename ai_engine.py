@@ -194,14 +194,22 @@ class AIJumpEngine(threading.Thread):
                 # 原版识别算法优先：第一跳与原脚本完全一致，AI 只在其结果上微调
                 res = analyze(frame, self.cfg, prefer="legacy")
                 if res.game_over:
-                    # 一局结束不等于跳飞：不动系数、不退出程序，蹲着等下一局。
-                    # 启停完全交给 GUI 的开始/停止按钮。
-                    if not self._waiting_game:
-                        self._waiting_game = True
-                        self.on_log("结算页：程序保持运行，等待重新开局（点「停止」才会结束）")
-                        self.on_frame(to_pil(annotate(frame, res, ["WAITING FOR NEXT ROUND"])))
-                    time.sleep(0.6)
-                    continue
+                    # 复检一次，避免游戏中的白色方块/特效被误判成结算页
+                    time.sleep(0.22)
+                    confirm = analyze(self._grab(), self.cfg, prefer="legacy")
+                    if not confirm.game_over:
+                        self.on_log("疑似结算页，复检仍在游戏中，继续跳跃")
+                        res = confirm
+                    else:
+                        # 一局结束不等于跳飞：不动系数、不退出程序，蹲着等下一局。
+                        # 启停完全交给 GUI 的开始/停止按钮。
+                        if not self._waiting_game:
+                            self._waiting_game = True
+                            self.on_log("结算页：程序保持运行，等待重新开局（点「停止」才会结束）")
+                            self.on_frame(to_pil(annotate(frame, res,
+                                                          ["WAITING FOR NEXT ROUND"])))
+                        time.sleep(0.6)
+                        continue
                 if self._waiting_game:
                     self._waiting_game = False
                     self.on_log("已检测到新一局，继续跳跃")
@@ -225,14 +233,15 @@ class AIJumpEngine(threading.Thread):
                 # 关键：以原版公式为基线，只乘一个被限幅的自适应系数
                 base_unit = legacy_press_ms(d_req, state.head_diameter, 1.0)
                 k = self.calibrator.stats()["factor"]
-                t_ms = self.calibrator.predict(base_unit)
+                t_ms = self.calibrator.predict(base_unit, d_req)
                 x, y = self._click_point()
                 actual_t = precise_press(x, y, t_ms, no_click=self.dry_run)
 
                 self.on_frame(to_pil(annotate(frame, res, [
                     "AI d=%.0fpx  t=%.0fms (base %.0f x %.3f)" % (d_req, actual_t, base_unit, k),
-                    "k=%.3f base=%.3f samples=%d" %
-                    (k, self.calibrator.stats()["base_factor"], self.calibrator.samples)])))
+                    "k=%.3f near=%.3f base=%.3f samples=%d" %
+                    (k, self.calibrator.stats()["near_factor"],
+                     self.calibrator.stats()["base_factor"], self.calibrator.samples)])))
 
                 self._wait_settled(frame)
                 after_frame = self._grab()
@@ -256,10 +265,12 @@ class AIJumpEngine(threading.Thread):
                             actual_t, d_act, d_req, base_unit, confidence=conf)
                         if ok:
                             self.on_log("第%02d跳 [%s cam=(%.0f,%.0f) resp=%.2f] 目标%.0fpx"
-                                        " 实跳%.0fpx 偏差%+.0fpx | hd=%.0f base=%.0f k=%.3f t=%.0fms" %
+                                        " 实跳%.0fpx 偏差%+.0fpx | hd=%.0f base=%.0f"
+                                        " k=%.3f near=%.3f t=%.0fms" %
                                         (self.jumps + 1, res.method, dx, dy, resp, d_req,
                                          d_act, err, state.head_diameter, base_unit,
-                                         self.calibrator.stats()["factor"], actual_t))
+                                         self.calibrator.stats()["factor"],
+                                         self.calibrator.stats()["near_factor"], actual_t))
                         else:
                             self.on_log("第%02d跳 偏差%+.0fpx | %s，k=%.3f" %
                                         (self.jumps + 1, err if err is not None else 0,

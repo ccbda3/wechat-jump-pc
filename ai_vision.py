@@ -193,19 +193,26 @@ def detect_board(bgr, piece, cfg=None):
 
 # ── 结算页 ──────────────────────────────────────────────────
 
-def detect_game_over(bgr, piece_found):
-    """结算页特征：中下部出现大片近白按钮 + 找不到棋子。"""
+def detect_game_over(bgr, piece_found=False):
+    """结算页特征：中下部有一块**宽而扁的白色按钮**，不是随便一片白。
+
+    只看白色占比时，游戏里跳上一个白色大方块也会凑够比例，导致误判
+    「已结算」而停下。结算页的「再玩一局」按钮是宽约 0.45w、高约 0.07h、
+    宽高比 3~6 的圆角矩形，用连通域形状能把它和方块区分开。
+    """
     h, w = bgr.shape[:2]
-    roi = bgr[int(h * 0.55):int(h * 0.88), int(w * 0.20):int(w * 0.90)]
+    roi = bgr[int(h * 0.64):int(h * 0.88), int(w * 0.26):int(w * 0.94)]
     if roi.size == 0:
         return False
-    near_white = (roi.min(axis=2) > 215).mean()
-    button = bgr[int(h * 0.68):int(h * 0.83), int(w * 0.32):int(w * 0.88)]
-    button_white = (button.min(axis=2) > 220).mean() if button.size else 0.0
-    # 两个条件同时成立才算结算页：真实结算页实测 button_white≈0.33、
-    # near_white≈0.23；游戏画面分别是 0.00 / 0.02。只靠单一条件容易被
-    # 白色方块或画面上的棋子误检触发，那会让程序平白停下来。
-    return bool(button_white > 0.28 and near_white > 0.12)
+    white = (roi.min(axis=2) > 220).astype(np.uint8)
+    n, labels, stats, cents = cv2.connectedComponentsWithStats(white, 8)
+    for i in range(1, n):
+        x, y, bw, bh, area = [int(v) for v in stats[i]]
+        if (bw > 0.30 * w and bh > 0.040 * h and 2.0 < bw / max(bh, 1) < 9.0
+                and area > 0.010 * w * h):
+            return True
+    # 兜底：极端整片白色（加载页之类）
+    return bool(white.mean() > 0.55)
 
 
 # ── 原版算法兜底 ────────────────────────────────────────────

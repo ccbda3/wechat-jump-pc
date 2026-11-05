@@ -710,9 +710,9 @@ class JumpGUI:
     def _update_ai_stats(self, d):
         ewma = d.get('ewma_err')
         tail = '偏差 %+.0fpx' % ewma if ewma is not None else '偏差 --'
-        self.ai_stats_text.set('系数 %.3f (基准 %.3f) | 样本 %d | %s | 保护 %d' %
-                               (d['factor'], d['base_factor'], d['samples'],
-                                tail, d.get('overshoots', 0)))
+        self.ai_stats_text.set('系数 %.3f 近 %.3f (基准 %.3f) | 样本 %d | %s | 保护 %d' %
+                               (d['factor'], d.get('near_factor', 1.0), d['base_factor'],
+                                d['samples'], tail, d.get('overshoots', 0)))
 
     def _reset_ai(self):
         if self.ai_engine and self.ai_engine.is_alive():
