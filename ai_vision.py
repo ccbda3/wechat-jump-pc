@@ -196,7 +196,10 @@ def detect_game_over(bgr, piece_found):
     near_white = (roi.min(axis=2) > 215).mean()
     button = bgr[int(h * 0.68):int(h * 0.83), int(w * 0.32):int(w * 0.88)]
     button_white = (button.min(axis=2) > 220).mean() if button.size else 0.0
-    return (button_white > 0.25) or (near_white > 0.14 and not piece_found)
+    # 两个条件同时成立才算结算页：真实结算页实测 button_white≈0.33、
+    # near_white≈0.23；游戏画面分别是 0.00 / 0.02。只靠单一条件容易被
+    # 白色方块或画面上的棋子误检触发，那会让程序平白停下来。
+    return bool(button_white > 0.28 and near_white > 0.12)
 
 
 # ── 原版算法兜底 ────────────────────────────────────────────

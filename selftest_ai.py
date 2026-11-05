@@ -69,6 +69,9 @@ def test_vision():
         r2 = analyze(real)
         check("感知：真实结算页识别为 game_over", r2.game_over, "method=%s" % r2.method)
     check("感知：游戏画面不误判为结算页", not res.game_over)
+    block = synthetic_frame()
+    cv2.rectangle(block, (260, 810), (360, 870), (250, 250, 250), -1)
+    check("感知：单个白色方块不误判为结算页", not analyze(block).game_over)
 
     cfg = VisionConfig()
     check("落稳：相同帧判定静止", is_settled(frame, frame.copy(), cfg))
@@ -176,6 +179,64 @@ def test_environment():
           "resized=%s hd=%.0f" % (s3.resized, s3.head_diameter))
 
 
+def synthetic_game_over():
+    """模拟结算页：中下部大片白 + 再玩一局按钮区域白色。"""
+    f = synthetic_frame()
+    h, w = f.shape[:2]
+    cv2.rectangle(f, (int(w * 0.32), int(h * 0.68)),
+                  (int(w * 0.88), int(h * 0.83)), (250, 250, 250), -1)
+    cv2.rectangle(f, (int(w * 0.22), int(h * 0.57)),
+                  (int(w * 0.86), int(h * 0.66)), (240, 240, 240), -1)
+    return f
+
+
+def test_game_over_behavior():
+    """结算页：不改系数、不退出程序、等下一局继续；启停只由按钮控制。"""
+    import json
+    import tempfile
+    from ai_calibration import AdaptiveCoefficient
+    from ai_engine import AIJumpEngine
+    from ai_vision import analyze
+    over, normal = synthetic_game_over(), synthetic_frame()
+    check("结算页：模拟画面能被识别", analyze(over).game_over)
+
+    seq = [0]
+
+    def source():
+        seq[0] += 1
+        return (over if seq[0] <= 2 else normal).copy()
+
+    logs = []
+    calib = AdaptiveCoefficient(path=None, base_factor=2.0)
+    eng = AIJumpEngine(
+        window_rect=(0, 0, normal.shape[1], normal.shape[0]),
+        calibrator=calib, frame_source=source, dry_run=True,
+        max_jumps=1, settle_timeout=0.6, on_log=logs.append)
+    eng.start()
+    eng.join(timeout=20)
+    check("结算页：程序不自行退出，等到新一局后继续跳",
+          (not eng.is_alive()) and eng.jumps == 1,
+          "jumps=%d" % eng.jumps)
+    check("结算页：日志提示等待与恢复，且没有「回拉」",
+          any("等待重新开局" in s for s in logs)
+          and any("新一局" in s for s in logs)
+          and not any("回拉" in s for s in logs))
+    check("结算页：系数完全不受影响", calib.stats()["factor"] == 2.0,
+          "k=%.3f overshoots=%d" % (calib.stats()["factor"],
+                                    calib.stats()["overshoots"]))
+
+    # 旧版本误回拉留下的脏记录应自动修回基准
+    path = os.path.join(tempfile.gettempdir(), "wj_dirty_calib_test.json")
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump({"factor": 1.477, "base_factor": 2.0, "samples": 1,
+                   "overshoots": 2, "rejected": 0}, f)
+    repaired = AdaptiveCoefficient.load(path, base_factor=2.0)
+    check("结算页：旧版脏记录自动修回基准",
+          repaired.stats()["factor"] == 2.0 and repaired.stats()["overshoots"] == 0,
+          "k=%.3f" % repaired.stats()["factor"])
+    os.remove(path)
+
+
 def test_gui():
     import gui_app
     app = gui_app.JumpGUI()
@@ -203,7 +264,8 @@ def test_window_grab():
 def main():
     t0 = time.time()
     for fn in (test_vision, test_calibration, test_precise_press,
-               test_environment, test_engine, test_gui, test_window_grab):
+               test_environment, test_game_over_behavior, test_engine,
+               test_gui, test_window_grab):
         try:
             fn()
         except Exception as e:

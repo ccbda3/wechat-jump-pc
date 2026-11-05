@@ -96,6 +96,7 @@ class AIJumpEngine(threading.Thread):
         self.on_log("AI 模式启动 | 沿用原版公式 | 基准系数 %.3f 当前系数 %.3f | 已有样本 %d" %
                     (s0["base_factor"], s0["factor"], s0["samples"]))
         misses = 0
+        self._waiting_game = False
         try:
             while self._running and (self.max_jumps is None or self.jumps < self.max_jumps):
                 if self.paused:
@@ -123,10 +124,17 @@ class AIJumpEngine(threading.Thread):
 
                 res = analyze(frame, self.cfg)
                 if res.game_over:
-                    self.calibrator.on_overshoot()
-                    self.on_log("检测到结算页，系数已回拉，停止跳跃（本局结束）")
-                    self.on_frame(to_pil(annotate(frame, res, ["GAME OVER"])))
-                    break
+                    # 一局结束不等于跳飞：不动系数、不退出程序，蹲着等下一局。
+                    # 启停完全交给 GUI 的开始/停止按钮。
+                    if not self._waiting_game:
+                        self._waiting_game = True
+                        self.on_log("结算页：程序保持运行，等待重新开局（点「停止」才会结束）")
+                        self.on_frame(to_pil(annotate(frame, res, ["WAITING FOR NEXT ROUND"])))
+                    time.sleep(0.6)
+                    continue
+                if self._waiting_game:
+                    self._waiting_game = False
+                    self.on_log("已检测到新一局，继续跳跃")
                 if not res.piece or not res.board:
                     misses += 1
                     if misses in (1, 5, 15):
@@ -151,7 +159,7 @@ class AIJumpEngine(threading.Thread):
                 self._wait_settled(frame)
                 after = analyze(self._grab(), self.cfg)
 
-                if after.piece:
+                if after.piece and not after.game_over:
                     vx = after.piece[0] - res.piece[0]
                     vy = after.piece[1] - res.piece[1]
                     ux = (res.board[0] - res.piece[0]) / max(d_req, 1e-6)
@@ -169,7 +177,8 @@ class AIJumpEngine(threading.Thread):
                                     (self.jumps + 1, err if err is not None else 0,
                                      reason, self.calibrator.stats()["factor"]))
                 else:
-                    self.on_log("第%02d跳 落点识别失败，本轮不学习" % (self.jumps + 1))
+                    self.on_log("第%02d跳 落点识别失败或已进入结算页，本轮不学习" %
+                                (self.jumps + 1))
 
                 self.jumps += 1
                 self.on_count(self.jumps)

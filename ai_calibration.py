@@ -125,7 +125,10 @@ class AdaptiveCoefficient:
         return ""
 
     def on_overshoot(self):
-        """结算页 / 掉出屏幕等失败信号，直接把系数拉回保守值。"""
+        """仅用于「落点远超目标」的真跳飞，把系数拉回保守值。
+
+        注意：结算页（一局结束）不能调用这里 —— 跳近掉落反而需要加大系数。
+        """
         with self._lock:
             self.factor = self._clip(self.factor * 0.85)
             self.overshoots += 1
@@ -179,6 +182,15 @@ class AdaptiveCoefficient:
             self.overshoots = int(data.get("overshoots", 0))
             self._ewma_err = data.get("ewma_err")
             self.history = data.get("history", [])
+            # 旧版本把「结算页」误当跳飞，会连乘 0.85 把系数越拉越低。
+            # 样本很少却大幅偏离基准的记录一定是脏数据，直接回到基准。
+            if self.samples < 3 and abs(self.factor / self.base_factor - 1.0) > 0.20:
+                self.factor = self.base_factor
+                self.overshoots = 0
+                self.rejected = 0
+                self.history = []
+                self._ewma_err = None
+                self.last_action = "reset_unreliable"
         except Exception:
             pass
 
