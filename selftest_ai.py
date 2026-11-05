@@ -80,34 +80,48 @@ def test_vision():
 
 
 def test_calibration():
-    """仿真真实物理 t = A*d + B，从错误初值出发，验证在线学习收敛且越跳越准。"""
-    from ai_calibration import OnlineCalibrator
+    """验证冷启动：首跳等于经典模式，之后只在基准附近微调，跳飞立刻回拉。"""
+    from ai_calibration import AdaptiveCoefficient, legacy_press_ms, MAX_PRESS_MS
     random.seed(7)
     np.random.seed(7)
-    TRUE_A, TRUE_B = 1.35, 240.0
-    calib = OnlineCalibrator(path=None)
-    start = calib.stats()
+    hd = 631 / 8.0
+    d = 300.0
+    base_unit = legacy_press_ms(d, hd, 1.0)
+    classic = legacy_press_ms(d, hd, 2.0)          # 经典模式，系数 2.0
+    calib = AdaptiveCoefficient(path=None, base_factor=2.0)
+    first = calib.predict(base_unit)
+    check("冷启动：首跳与经典模式完全一致", abs(first - classic) < 1.0,
+          "AI %.1fms / 经典 %.1fms" % (first, classic))
+    check("冷启动：按压远低于硬上限", first < MAX_PRESS_MS * 0.75,
+          "%.0fms / 上限 %.0fms" % (first, MAX_PRESS_MS))
+
+    # 仿真：当前环境真正需要的系数比用户基准高 17.5%
+    k_true = 2.35
     errs = []
-    for i in range(45):
-        d_req = random.uniform(150, 450)
-        t = calib.predict(d_req)
-        d_act = max(1.0, (t - TRUE_B) / TRUE_A + np.random.normal(0, 3.0))
-        calib.observe(t, d_act, d_req, confidence=0.9)
+    for i in range(30):
+        d_req = random.uniform(180, 420)
+        base = legacy_press_ms(d_req, hd, 1.0)
+        t = calib.predict(base)
+        d_act = d_req * (t / (base * k_true)) + np.random.normal(0, 2.0)
+        calib.observe(t, d_act, d_req, base, confidence=0.9)
         errs.append(abs(d_act - d_req))
     s = calib.stats()
-    early = float(np.mean(errs[:10]))
-    late = float(np.mean(errs[-10:]))
-    check("校准：从错误初值收敛到真实映射",
-          abs(s["a"] - TRUE_A) < 0.18 and abs(s["b"] - TRUE_B) < 70,
-          "a %.2f->%.3f (真1.35)  b %.0f->%.0f (真240)  样本%d" %
-          (start["a"], s["a"], start["b"], s["b"], s["samples"]))
-    check("校准：越跳越准（后期偏差显著小于前期）", late < early * 0.5,
-          "前10跳平均偏差%.1fpx -> 后10跳%.1fpx" % (early, late))
-    bad = OnlineCalibrator(path=None)
-    for _ in range(10):
-        bad.observe(600, 320, 300, confidence=0.9)
-    ok, reason, _ = bad.observe(600, 20, 300, confidence=0.1)
-    check("校准：低置信度/异常样本被拒绝", not ok, "reason=%s" % reason)
+    early, late = float(np.mean(errs[:8])), float(np.mean(errs[-8:]))
+    check("自适应：系数收敛到环境真值", abs(s["factor"] - k_true) < 0.12,
+          "k 2.000 -> %.3f (真 %.2f) 样本%d" % (s["factor"], k_true, s["samples"]))
+    check("自适应：越跳越准", late < early * 0.5,
+          "前8跳偏差%.1fpx -> 后8跳%.1fpx" % (early, late))
+    check("自适应：系数始终被夹在基准 ±40%",
+          2.0 * 0.6 <= s["factor"] <= 2.0 * 1.4, "k=%.3f" % s["factor"])
+
+    k_before = calib.stats()["factor"]
+    ok, reason, _ = calib.observe(600, 2 * d, d, base_unit, confidence=0.9)
+    k_after = calib.stats()["factor"]
+    check("跳飞保护：超远落点拒绝学习并回拉系数",
+          (not ok) and k_after < k_before, "%s  k %.3f -> %.3f" %
+          (reason, k_before, k_after))
+    check("硬上限：极端输入也不会长按", calib.predict(1e6) <= MAX_PRESS_MS,
+          "%.0fms" % calib.predict(1e6))
 
 
 def test_precise_press():
@@ -125,11 +139,11 @@ def test_precise_press():
 
 def test_engine():
     """用固定合成帧跑通完整闭环（dry_run 不发鼠标事件）。"""
-    from ai_calibration import OnlineCalibrator
+    from ai_calibration import AdaptiveCoefficient
     from ai_engine import AIJumpEngine
     frame = synthetic_frame()
     logs, frames, counts, stats = [], [], [], []
-    calib = OnlineCalibrator(path=None)
+    calib = AdaptiveCoefficient(path=None, base_factor=2.0)
     eng = AIJumpEngine(
         window_rect=(0, 0, frame.shape[1], frame.shape[0]),
         calibrator=calib, frame_source=lambda: frame.copy(),
@@ -144,6 +158,22 @@ def test_engine():
           any("AI 引擎结束" in s for s in logs) and len(frames) >= 2 and len(stats) >= 2)
     check("引擎：固定画面不会产生虚假学习",
           calib.samples == 0, "样本=%d 丢弃=%d" % (calib.samples, calib.rejected))
+
+
+def test_environment():
+    from ai_environment import EnvironmentMonitor
+    frame = synthetic_frame()
+    mon = EnvironmentMonitor()
+    s1 = mon.update(frame, (0, 0, 631, 1159))
+    check("环境：正常游戏画面判定有效", s1.valid,
+          "亮度%.0f 对比度%.0f hd=%.0f" % (s1.brightness, s1.contrast, s1.head_diameter))
+    s2 = mon.update(np.zeros_like(frame), (0, 0, 631, 1159))
+    check("环境：黑屏判定无效（不会瞎点击）", not s2.valid, s2.note)
+    big = cv2.resize(frame, (700, 1200))
+    s3 = mon.update(big, (0, 0, 700, 1200))
+    check("环境：窗口缩放被检测并重算头部直径",
+          s3.resized and abs(s3.head_diameter - 700 / 8.0) < 1.0,
+          "resized=%s hd=%.0f" % (s3.resized, s3.head_diameter))
 
 
 def test_gui():
@@ -173,7 +203,7 @@ def test_window_grab():
 def main():
     t0 = time.time()
     for fn in (test_vision, test_calibration, test_precise_press,
-               test_engine, test_gui, test_window_grab):
+               test_environment, test_engine, test_gui, test_window_grab):
         try:
             fn()
         except Exception as e:

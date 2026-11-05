@@ -1,137 +1,159 @@
 # -*- coding: utf-8 -*-
-"""在线校准器：用「跳完之后的真实落点」自主学习 按压时长 = f(目标距离)。
+"""环境自适应系数：以原版公式为基线，只学一个小修正量。
 
-这是整个 AI 模式的核心。原版是开环：跳偏了不修正，误差永远不收敛。
-这里把每次跳跃当作一个训练样本：
-    观测 (实际跳跃距离 d_actual, 本次发出的按压 t_used)
-    拟合  t = a * d + b
-用带遗忘因子的递推最小二乘（RLS）在线更新，几十跳内自动收敛，
-并且能自适应窗口尺寸、DPI、不同电脑、不同游戏版本。
+设计原则（避免冷启动「从零瞎按」）：
+  1. 首跳与经典模式**完全一致**：按压 = 原版 calc_press_time(距离, 头部直径) × 用户已调好的系数。
+  2. AI 只在线微调这个系数 k，并被夹在基准值的 ±40% 内，单步变化不超过 8%。
+  3. 按压时长有绝对上限，任何异常都不可能出现「一直按住」。
+  4. 跳飞（落点远超目标）立即把系数往回拉，绝不拿坏样本去学习。
 
-注意：拟合的是「实际发生了什么」，不是「我们希望发生什么」，
-所以感知层哪怕存在稳定的系统性偏差，也会被 a 自动吸收掉。
+所以它不是重新训练一个物理模型，而是在原项目已有的可靠参数之上，
+根据当前窗口尺寸 / DPI / 机器计时 / 画面识别偏差做环境自适应。
 """
 import json
 import math
 import os
 import threading
 
-import numpy as np
-
-D_SCALE = 100.0          # 距离归一化，保证 RLS 数值稳定
-DEFAULT_A = 2.0          # ms / px 的初值（约等于原版默认系数 2.0 的等效值）
-DEFAULT_B = 100.0        # ms
 MIN_PRESS_MS = 200.0
-MAX_PRESS_MS = 2200.0
+MAX_PRESS_MS = 1400.0          # 硬上限：原版典型值约 650ms，正常绝不会触顶
 
 
-class OnlineCalibrator:
-    """线程安全的在线线性回归校准器（RLS + 遗忘因子 + 异常样本剔除）。"""
+def legacy_press_ms(distance_px, head_diameter, coefficient=1.0):
+    """原版 gui_app.calc_press_time 的等价实现，coefficient=1.0 时为裸基线。"""
+    hd = max(float(head_diameter), 1.0)
+    scale = 0.945 * 2 / hd
+    actual = float(distance_px) * scale * (math.sqrt(6) / 2)
+    t = (-945 + math.sqrt(945 ** 2 + 4 * 105 * 36 * actual)) / (2 * 105) * 1000
+    return t * float(coefficient)
 
-    def __init__(self, path=None, forgetting=0.97, auto_save=True):
+
+class AdaptiveCoefficient:
+    """线程安全的在线系数自适应（EWMA + 限幅 + 跳飞保护）。"""
+
+    def __init__(self, path=None, base_factor=2.0, factor=None, beta=0.28,
+                 clamp_low=0.60, clamp_high=1.40, max_step=0.08,
+                 auto_save=True):
         self.path = path
-        self.forgetting = float(forgetting)
+        self.base_factor = float(base_factor)      # 用户在 GUI 里调好的原版系数
+        self.factor = float(factor) if factor is not None else self.base_factor
+        self.beta = float(beta)
+        self.clamp_low = float(clamp_low)
+        self.clamp_high = float(clamp_high)
+        self.max_step = float(max_step)
         self.auto_save = auto_save
         self._lock = threading.Lock()
-        self.reset()
+        self.samples = 0
+        self.rejected = 0
+        self.overshoots = 0
+        self._ewma_err = None
+        self.history = []
+        self.last_action = "init"
+        if path:
+            self._load()
 
-    def reset(self):
-        with self._lock:
-            self._theta = np.array([DEFAULT_A * D_SCALE, DEFAULT_B], dtype=float)
-            self._P = np.eye(2) * 500.0
-            self.samples = 0
-            self.rejected = 0
-            self._ewma_err = None
-            self.history = []          # 最近若干个 (d_req, d_act, t_ms, err_px)
-            self.last_reject_reason = ""
+    # ── 边界 ────────────────────────────────────────────────
+    def _bounds(self):
+        return (self.base_factor * self.clamp_low,
+                self.base_factor * self.clamp_high)
+
+    def _clip(self, value):
+        return float(min(max(value, self._bounds()[0]), self._bounds()[1]))
 
     # ── 预测 ────────────────────────────────────────────────
-    def _raw(self, d_px):
-        x = np.array([d_px / D_SCALE, 1.0])
-        return float(x @ self._theta), x
-
-    def predict(self, d_px):
-        """给定目标距离（像素），返回建议按压时长（毫秒）。"""
+    def predict(self, base_ms_unit):
+        """base_ms_unit = legacy_press_ms(d, hd, 1.0)；返回本次按压毫秒。"""
         with self._lock:
-            t, _ = self._raw(float(d_px))
-        return float(np.clip(t, MIN_PRESS_MS, MAX_PRESS_MS))
+            k = self.factor
+        return float(min(max(base_ms_unit * k, MIN_PRESS_MS), MAX_PRESS_MS))
+
+    def predict_for(self, distance_px, head_diameter):
+        return self.predict(legacy_press_ms(distance_px, head_diameter, 1.0))
 
     # ── 学习 ────────────────────────────────────────────────
-    def observe(self, t_ms, d_actual_px, d_requested_px=None, confidence=1.0):
-        """喂入一次真实跳跃的观测结果，返回 (accepted, reason, err_px)。
+    def observe(self, t_used_ms, d_actual_px, d_requested_px,
+                base_ms_unit, confidence=1.0):
+        """用落点偏差反推「本来该按多久」，只微调系数 k。
 
-        t_ms            实际发出的按压时长（用 precise_press 的实测值，不要用名义值）
-        d_actual_px     跳后棋子相对跳前沿目标方向的位移（像素）
-        d_requested_px  本轮期望距离，用于异常过滤；None 时跳过比例检查
-        confidence      落点检测置信度，过低不学习
+        返回 (accepted, reason, err_px)。
         """
-        t_ms = float(t_ms)
+        t_used = float(t_used_ms)
         d_act = float(d_actual_px)
-        err = None if d_requested_px is None else d_act - float(d_requested_px)
-
-        reason = self._reject_reason(t_ms, d_act, d_requested_px, confidence)
+        d_req = float(d_requested_px)
+        err = d_act - d_req
+        reason = self._reject_reason(t_used, d_act, d_req, confidence)
         if reason:
             with self._lock:
                 self.rejected += 1
-                self.last_reject_reason = reason
+                self.last_action = reason
+                if reason in ("overshoot", "implausible"):
+                    self.overshoots += 1
+                    self.factor = self._clip(self.factor * 0.88)  # 立刻回拉
+                    self.last_action = "overshoot_pullback"
+                if self.auto_save and self.path:
+                    self._save_unlocked()
             return False, reason, err
 
         with self._lock:
-            pred, x = self._raw(d_act)
-            lam = self.forgetting
-            denom = lam + float(x @ self._P @ x)
-            K = (self._P @ x) / denom
-            self._theta += K * (t_ms - pred)
-            self._P = (self._P - np.outer(K, x @ self._P)) / lam
+            # 局部线性近似：想跳 d_req，实际跳了 d_act，则应按 t_used * d_req/d_act
+            t_target = t_used * d_req / max(d_act, 1.0)
+            k_target = t_target / max(base_ms_unit, 1.0)
+            lo, hi = self.factor * (1 - self.max_step), self.factor * (1 + self.max_step)
+            k_target = min(max(k_target, lo), hi)
+            self.factor = self._clip((1 - self.beta) * self.factor + self.beta * k_target)
             self.samples += 1
-            if err is not None:
-                self._ewma_err = err if self._ewma_err is None else 0.7 * self._ewma_err + 0.3 * err
-                self.history.append((round(float(d_requested_px), 1), round(d_act, 1),
-                                     round(t_ms, 1), round(err, 1)))
-                self.history = self.history[-60:]
+            self._ewma_err = err if self._ewma_err is None else 0.7 * self._ewma_err + 0.3 * err
+            self.history.append((round(d_req, 1), round(d_act, 1),
+                                 round(t_used, 1), round(err, 1)))
+            self.history = self.history[-60:]
+            self.last_action = "learn"
             if self.auto_save and self.path:
                 self._save_unlocked()
         return True, "ok", err
 
-    def _reject_reason(self, t_ms, d_act, d_req, confidence):
-        if not math.isfinite(d_act) or not math.isfinite(t_ms) or d_act <= 0:
+    def _reject_reason(self, t_used, d_act, d_req, confidence):
+        if not all(math.isfinite(v) for v in (t_used, d_act, d_req)) or d_act <= 0 or d_req <= 0:
             return "invalid"
         if confidence < 0.4:
             return "low_confidence"
-        if d_req is not None:
-            d_req = float(d_req)
-            if d_act < 0.35 * d_req:
-                return "fell_short"       # 多半是没跳上去 / 掉落，样本不可用
-            if d_act > 2.0 * d_req + 120:
-                return "implausible"      # 多半是落点识别错
-        if self.samples > 8:
-            with self._lock:
-                pred, _ = self._raw(d_act)
-            if abs(t_ms - pred) > max(280.0, 0.65 * t_ms):
-                return "outlier"          # 与已学模型严重矛盾，别污染拟合
+        if d_act < 0.35 * d_req:
+            return "fell_short"
+        if d_act > 2.5 * d_req + 80:
+            return "implausible"
+        if d_act > 1.6 * d_req + 60:
+            return "overshoot"           # 跳飞：不学习，立即回拉
         return ""
+
+    def on_overshoot(self):
+        """结算页 / 掉出屏幕等失败信号，直接把系数拉回保守值。"""
+        with self._lock:
+            self.factor = self._clip(self.factor * 0.85)
+            self.overshoots += 1
+            self.last_action = "overshoot_pullback"
+            if self.auto_save and self.path:
+                self._save_unlocked()
 
     # ── 状态 ────────────────────────────────────────────────
     def stats(self):
         with self._lock:
-            a = self._theta[0] / D_SCALE
-            b = self._theta[1]
             return {
+                "factor": round(self.factor, 3),
+                "base_factor": round(self.base_factor, 3),
                 "samples": self.samples,
                 "rejected": self.rejected,
-                "a": round(a, 3),             # ms per px
-                "b": round(b, 1),
+                "overshoots": self.overshoots,
                 "ewma_err": None if self._ewma_err is None else round(self._ewma_err, 1),
-                "last_reject": self.last_reject_reason,
+                "last_action": self.last_action,
                 "recent": self.history[-5:],
             }
 
     # ── 持久化 ──────────────────────────────────────────────
     def _save_unlocked(self):
         try:
-            data = {"theta": self._theta.tolist(), "P": self._P.tolist(),
+            data = {"factor": self.factor, "base_factor": self.base_factor,
                     "samples": self.samples, "rejected": self.rejected,
-                    "ewma_err": self._ewma_err, "history": self.history[-20:]}
+                    "overshoots": self.overshoots, "ewma_err": self._ewma_err,
+                    "history": self.history[-20:]}
             tmp = self.path + ".tmp"
             with open(tmp, "w", encoding="utf-8") as f:
                 json.dump(data, f)
@@ -144,18 +166,32 @@ class OnlineCalibrator:
             if self.path:
                 self._save_unlocked()
 
-    @classmethod
-    def load(cls, path, **kwargs):
-        obj = cls(path=path, **kwargs)
+    def _load(self):
         try:
-            with open(path, encoding="utf-8") as f:
+            with open(self.path, encoding="utf-8") as f:
                 data = json.load(f)
-            obj._theta = np.array(data["theta"], dtype=float)
-            obj._P = np.array(data["P"], dtype=float)
-            obj.samples = int(data.get("samples", 0))
-            obj.rejected = int(data.get("rejected", 0))
-            obj._ewma_err = data.get("ewma_err")
-            obj.history = data.get("history", [])
+            saved_base = float(data.get("base_factor", self.base_factor)) or self.base_factor
+            saved_k = float(data.get("factor", saved_base))
+            # 用户后来调过滑块时，把已学结果按比例迁移，而不是从头学
+            self.factor = self._clip(self.base_factor * (saved_k / saved_base))
+            self.samples = int(data.get("samples", 0))
+            self.rejected = int(data.get("rejected", 0))
+            self.overshoots = int(data.get("overshoots", 0))
+            self._ewma_err = data.get("ewma_err")
+            self.history = data.get("history", [])
         except Exception:
             pass
-        return obj
+
+    @classmethod
+    def load(cls, path, base_factor=2.0, **kwargs):
+        return cls(path=path, base_factor=base_factor, **kwargs)
+
+    def reset(self):
+        with self._lock:
+            self.factor = self.base_factor
+            self.samples = 0
+            self.rejected = 0
+            self.overshoots = 0
+            self._ewma_err = None
+            self.history = []
+            self.last_action = "reset"

@@ -1,19 +1,18 @@
 # -*- coding: utf-8 -*-
-"""AI 跳跃主循环：截图 -> 感知 -> 在线预测 -> 精确按压 -> 落点反馈 -> 学习。
+"""AI 跳跃主循环：环境感知 -> 截图 -> 感知 -> 原版公式基线 -> 精确按压 -> 落点反馈。
 
-与原版 _game_loop 完全并列，由 GUI 的「AI 自校准」开关选择，互不影响。
-每一轮都会把 (实际跳了多远, 实际按了多久) 喂给 OnlineCalibrator，
-所以系数会随窗口尺寸、DPI、机器性能自动收敛，不再需要人手调。
+与原版 _game_loop 并列，由 GUI 的「AI 自校准」开关选择，互不影响。
+和原版唯一的区别是：按压时长 = 原版公式 × 一个在线微调的系数 k。
+首跳 k 就等于用户当前滑块值，所以第一跳与经典模式完全一致，不会冷启动跳飞。
 """
-import math
 import os
 import random
 import threading
 import time
 
-from ai_calibration import OnlineCalibrator
-from ai_control import (ScreenGrabber, get_window_rect, grab_window,
-                        precise_press, to_pil)
+from ai_calibration import AdaptiveCoefficient, legacy_press_ms
+from ai_control import ScreenGrabber, grab_window, precise_press, to_pil
+from ai_environment import EnvironmentMonitor
 from ai_vision import VisionConfig, analyze, annotate, is_settled
 
 DEFAULT_STATE_PATH = "ai_calibration.json"
@@ -24,6 +23,7 @@ class AIJumpEngine(threading.Thread):
 
     def __init__(self, window_rect, hwnd=None, screen_region=None,
                  calibrator=None, cfg=None, state_path=None,
+                 base_coefficient=2.0, head_diameter=None,
                  on_log=None, on_frame=None, on_stats=None, on_count=None,
                  frame_source=None, dry_run=False, max_jumps=None,
                  settle_timeout=3.0, **kwargs):
@@ -34,7 +34,9 @@ class AIJumpEngine(threading.Thread):
         state_path = state_path or DEFAULT_STATE_PATH
         if not os.path.isabs(state_path):
             state_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), state_path)
-        self.calibrator = calibrator or OnlineCalibrator.load(state_path)
+        self.calibrator = calibrator or AdaptiveCoefficient.load(
+            state_path, base_factor=base_coefficient)
+        self.env = EnvironmentMonitor(head_diameter=head_diameter)
         self.cfg = cfg or VisionConfig.load()
         self.on_log = on_log or (lambda s: print("[AI]", s))
         self.on_frame = on_frame or (lambda img: None)
@@ -90,8 +92,9 @@ class AIJumpEngine(threading.Thread):
     # ── 主循环 ──────────────────────────────────────────────
     def run(self):
         self._running = True
-        self.on_log("AI 自校准模式启动 | 已有学习样本 %d 条 | 当前 a=%.3f ms/px" %
-                    (self.calibrator.samples, self.calibrator.stats()["a"]))
+        s0 = self.calibrator.stats()
+        self.on_log("AI 模式启动 | 沿用原版公式 | 基准系数 %.3f 当前系数 %.3f | 已有样本 %d" %
+                    (s0["base_factor"], s0["factor"], s0["samples"]))
         misses = 0
         try:
             while self._running and (self.max_jumps is None or self.jumps < self.max_jumps):
@@ -106,9 +109,22 @@ class AIJumpEngine(threading.Thread):
                     time.sleep(0.4)
                     continue
 
+                # 环境感知：画面无效时绝不点击
+                state = self.env.update(frame, self.window_rect)
+                if not state.valid:
+                    if misses in (0, 1, 5, 15):
+                        self.on_log("环境异常(%s)，本轮跳过不点击" % state.describe())
+                    misses += 1
+                    time.sleep(0.4)
+                    continue
+                if state.resized:
+                    self.on_log("窗口尺寸变为 %dx%d，head_diameter 重算为 %.0fpx" %
+                                (state.width, state.height, state.head_diameter))
+
                 res = analyze(frame, self.cfg)
                 if res.game_over:
-                    self.on_log("检测到结算页，停止跳跃（本局结束）")
+                    self.calibrator.on_overshoot()
+                    self.on_log("检测到结算页，系数已回拉，停止跳跃（本局结束）")
                     self.on_frame(to_pil(annotate(frame, res, ["GAME OVER"])))
                     break
                 if not res.piece or not res.board:
@@ -120,14 +136,17 @@ class AIJumpEngine(threading.Thread):
                 misses = 0
 
                 d_req = res.distance
-                t_ms = self.calibrator.predict(d_req)
+                # 关键：以原版公式为基线，只乘一个被限幅的自适应系数
+                base_unit = legacy_press_ms(d_req, state.head_diameter, 1.0)
+                k = self.calibrator.stats()["factor"]
+                t_ms = self.calibrator.predict(base_unit)
                 x, y = self._click_point()
                 actual_t = precise_press(x, y, t_ms, no_click=self.dry_run)
 
                 self.on_frame(to_pil(annotate(frame, res, [
-                    "AI d=%.0fpx  t=%.0fms" % (d_req, actual_t),
-                    "samples=%d  a=%.3f" % (self.calibrator.samples,
-                                            self.calibrator.stats()["a"])])))
+                    "AI d=%.0fpx  t=%.0fms (base %.0f x %.3f)" % (d_req, actual_t, base_unit, k),
+                    "k=%.3f base=%.3f samples=%d" %
+                    (k, self.calibrator.stats()["base_factor"], self.calibrator.samples)])))
 
                 self._wait_settled(frame)
                 after = analyze(self._grab(), self.cfg)
@@ -140,13 +159,15 @@ class AIJumpEngine(threading.Thread):
                     d_act = vx * ux + vy * uy          # 沿目标方向投影
                     conf = min(res.confidence, 0.8 if after.confidence == 0 else after.confidence)
                     ok, reason, err = self.calibrator.observe(
-                        actual_t, d_act, d_req, confidence=conf)
+                        actual_t, d_act, d_req, base_unit, confidence=conf)
                     if ok:
-                        self.on_log("第%02d跳 目标%.0fpx 实跳%.0fpx 偏差%+.0fpx 按压%.0fms | 已学习" %
-                                    (self.jumps + 1, d_req, d_act, err, actual_t))
+                        self.on_log("第%02d跳 目标%.0fpx 实跳%.0fpx 偏差%+.0fpx 按压%.0fms k=%.3f" %
+                                    (self.jumps + 1, d_req, d_act, err, actual_t,
+                                     self.calibrator.stats()["factor"]))
                     else:
-                        self.on_log("第%02d跳 偏差%+.0fpx | 样本丢弃(%s)" %
-                                    (self.jumps + 1, err if err is not None else 0, reason))
+                        self.on_log("第%02d跳 偏差%+.0fpx | %s，k=%.3f" %
+                                    (self.jumps + 1, err if err is not None else 0,
+                                     reason, self.calibrator.stats()["factor"]))
                 else:
                     self.on_log("第%02d跳 落点识别失败，本轮不学习" % (self.jumps + 1))
 
@@ -160,8 +181,9 @@ class AIJumpEngine(threading.Thread):
                 self._screen.close()
             self._running = False
             s = self.calibrator.stats()
-            self.on_log("AI 引擎结束 | 共 %d 跳 | 学习样本 %d | a=%.3f b=%.1f" %
-                        (self.jumps, s["samples"], s["a"], s["b"]))
+            self.on_log("AI 引擎结束 | 共 %d 跳 | 系数 %.3f (基准 %.3f) | 样本 %d | 跳飞保护 %d 次" %
+                        (self.jumps, s["factor"], s["base_factor"],
+                         s["samples"], s["overshoots"]))
 
     def _wait_settled(self, first_frame):
         """轮询到画面连续静止，避免把抛物线中的棋子当成落点。"""

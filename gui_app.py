@@ -294,7 +294,7 @@ class JumpGUI:
         frm_ai.pack(fill=tk.X, pady=(0, 8))
         ttk.Checkbutton(frm_ai, text='启用 AI 模式（自动学习按压时长）',
                         variable=self.ai_mode).pack(anchor=tk.W)
-        ttk.Label(frm_ai, text='窗口级抓图 + 落点反馈 + 在线拟合，无需手调系数',
+        ttk.Label(frm_ai, text='首跳沿用上方系数与原版公式，只按环境微调 ±40%',
                   font=('Microsoft YaHei UI', 7), wraplength=290,
                   foreground='#7f849c').pack(anchor=tk.W, pady=(2, 0))
         self.ai_stats_label = ttk.Label(frm_ai, textvariable=self.ai_stats_text,
@@ -558,6 +558,8 @@ class JumpGUI:
             self.ai_engine = AIJumpEngine(
                 window_rect=window_rect, hwnd=hwnd,
                 screen_region=self.game_region,
+                base_coefficient=self.coef_var.get(),
+                head_diameter=self.hd_var.get(),
                 on_log=lambda s: self.update_queue.put(('log', s)),
                 on_frame=lambda img: self.update_queue.put(('frame', img)),
                 on_stats=lambda d: self.update_queue.put(('aistats', d)),
@@ -700,8 +702,9 @@ class JumpGUI:
     def _update_ai_stats(self, d):
         ewma = d.get('ewma_err')
         tail = '偏差 %+.0fpx' % ewma if ewma is not None else '偏差 --'
-        self.ai_stats_text.set('样本 %d | a=%.3f ms/px | b=%.0fms | %s' %
-                               (d['samples'], d['a'], d['b'], tail))
+        self.ai_stats_text.set('系数 %.3f (基准 %.3f) | 样本 %d | %s | 保护 %d' %
+                               (d['factor'], d['base_factor'], d['samples'],
+                                tail, d.get('overshoots', 0)))
 
     def _reset_ai(self):
         if self.ai_engine and self.ai_engine.is_alive():
