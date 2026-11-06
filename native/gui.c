@@ -26,6 +26,8 @@ volatile LONG g_state = ST_STOPPED;
 double g_base_coef = 1.0;
 int g_greedy = 0;
 static HHOOK g_hook = NULL;
+static HANDLE g_prev_thread = NULL;
+static volatile LONG g_prev_stop = 0;
 HWND g_target = NULL;
 wchar_t g_target_title[256] = L"";
 
@@ -753,6 +755,22 @@ static void do_button(int id) {
     InvalidateRect(g_main, NULL, FALSE);
 }
 
+static DWORD WINAPI preview_main(LPVOID param) {
+    (void)param;
+    FrameBuf fb = {0};
+    while (!g_prev_stop) {
+        HWND t = g_target;
+        if (g_running && t && IsWindow(t)) {
+            if (grab_frame(t, &fb)) publish_frame(&fb);
+            Sleep(90);
+        } else {
+            Sleep(180);
+        }
+    }
+    free(fb.data);
+    return 0;
+}
+
 static LRESULT CALLBACK hotkey_proc(int code, WPARAM wp, LPARAM lp) {
     if (code < 0) return CallNextHookEx(g_hook, code, wp, lp);
     if ((wp == WM_KEYDOWN || wp == WM_SYSKEYDOWN)) {
@@ -869,6 +887,12 @@ static LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         DestroyWindow(hwnd);
         return 0;
     case WM_DESTROY:
+        g_prev_stop = 1;
+        if (g_prev_thread) {
+            WaitForSingleObject(g_prev_thread, 800);
+            CloseHandle(g_prev_thread);
+            g_prev_thread = NULL;
+        }
         if (g_hook) {
             UnhookWindowsHookEx(g_hook);
             g_hook = NULL;
@@ -925,6 +949,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show) {
 
     g_hook = SetWindowsHookExW(WH_KEYBOARD_LL, hotkey_proc,
                                GetModuleHandleW(NULL), 0);
+    g_prev_thread = CreateThread(NULL, 0, preview_main, NULL, 0, NULL);
     log_line(g_hook ? L"全局快捷键已启用：游戏窗口在前台时按空格暂停/继续"
                     : L"全局快捷键注册失败，仅本窗口在前台时按空格生效");
 
