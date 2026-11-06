@@ -391,8 +391,10 @@ class Runner:
         self.policy.update(info["feat"], info["action"], reward)
         self.jumps_in_episode += 1
         self.episode_reward += reward
-        self.logline("第%02d跳 目标%.0fpx 横向偏差%.0fpx 奖励%.3f 平均%.3f %s"
-                     % (self.jumps_in_episode, info["d"], err, reward,
+        dx = info["res"].board[0] - info["res"].piece[0]
+        signed = (after.piece[0] - ax0 - block["x"]) * (1.0 if dx > 0 else -1.0)
+        self.logline("第%02d跳 目标%.0fpx 横向偏差%.0fpx(%+.0f) 奖励%.3f 平均%.3f %s"
+                     % (self.jumps_in_episode, info["d"], err, signed, reward,
                         float(np.mean(self.policy.rewards[-20:])), after.method))
         emit({"t": "res", "kind": "ok", "reward": reward, "err": err,
               "det": det_of(after, False, reward=reward, err=err),
