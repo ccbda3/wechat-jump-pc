@@ -13,7 +13,7 @@ MIN_PRESS_MS = 140.0
 MAX_PRESS_MS = 1150.0
 MS_PER_PX = 2.14
 MS_REF_W = 670.0
-FREEZE_POLICY = True
+FREEZE_POLICY = False
 
 
 def legacy_press_ms(distance_px, head_diameter, coefficient=1.0):
