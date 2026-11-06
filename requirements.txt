@@ -3,6 +3,9 @@ Pillow
 numpy
 opencv-python
 mss
+# 棋子/方块 YOLO 检测（CPU 推理即可，不用装 CUDA 版 torch）
+ultralytics
+torch
 # 结算页中文 OCR（Windows 内置识别引擎）
 winrt-runtime
 winrt-Windows.Media.Ocr

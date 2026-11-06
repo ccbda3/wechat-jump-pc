@@ -16,9 +16,21 @@ from ai_vision import VisionConfig, analyze, detect_game_over
 from policy import MAX_PRESS_MS, MIN_PRESS_MS, MS_PER_PX, MS_REF_W, Policy
 from ocr import OcrReader, game_crop
 from landing import landing_reward
+from yolo_vision import YoloVision
 
 MODEL_PATH = os.path.join(ROOT, "ml_model.json")
 LOG_DIR = os.path.join(ROOT, "logs")
+_YOLO = None
+
+
+def yolo_view(sub):
+    global _YOLO
+    if _YOLO is None:
+        _YOLO = YoloVision()
+    try:
+        return _YOLO.analyze(sub)
+    except Exception:
+        return None
 
 
 def emit(obj):
@@ -59,7 +71,9 @@ def features(res, w, h, base_unit, prev_reward, x0=0):
 
 def analyze_view(cfg, frame):
     sub, x0 = game_crop(frame)
-    res = analyze(sub, cfg, prefer="cv")
+    res = yolo_view(sub)
+    if res is None:
+        res = analyze(sub, cfg, prefer="cv")
     if x0:
         if res.piece:
             res.piece = (res.piece[0] + x0, res.piece[1])
