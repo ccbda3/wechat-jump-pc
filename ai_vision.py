@@ -73,7 +73,8 @@ class FrameResult:
     distance: float = 0.0        # 像素距离
     confidence: float = 0.0
     game_over: bool = False
-    method: str = "failed"       # cv / legacy / failed / game_over
+    method: str = "failed"       # cv / legacy / yolo / failed / game_over
+    box: tuple = None            # 目标方块框 (x, y, w, h)
 
 
 # ── 背景估计 ────────────────────────────────────────────────
@@ -337,8 +338,9 @@ def analyze(bgr, cfg=None, prefer="cv"):
             method = "failed"
     if piece and board:
         d = math.hypot(board[0] - piece[0], board[1] - piece[1])
+        box = board_raw[3] if (board_raw and method == "cv") else None
         return FrameResult(piece=piece, board=board, distance=d,
-                           confidence=conf, method=method)
+                           confidence=conf, method=method, box=box)
     return FrameResult(piece=piece, method="failed")
 
 

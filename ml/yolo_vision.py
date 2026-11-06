@@ -74,4 +74,5 @@ class YoloVision:
             ty = p[2] + 0.30 * (p[4] - p[2])
         d = math.hypot(tx - px, ty - py)
         return FrameResult(piece=(px, py), board=(tx, ty), distance=d,
-                           confidence=min(piece[0], p[0]), method="yolo")
+                           confidence=min(piece[0], p[0]), method="yolo",
+                           box=(p[1], p[2], p[3] - p[1], p[4] - p[2]))

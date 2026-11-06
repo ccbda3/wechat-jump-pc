@@ -79,6 +79,8 @@ def analyze_view(cfg, frame):
             res.piece = (res.piece[0] + x0, res.piece[1])
         if res.board:
             res.board = (res.board[0] + x0, res.board[1])
+        if res.box:
+            res.box = (res.box[0] + x0, res.box[1], res.box[2], res.box[3])
         if res.distance:
             res.distance = math.hypot(res.board[0] - res.piece[0],
                                       res.board[1] - res.piece[1])
@@ -218,6 +220,13 @@ class Runner:
         self.episode_reward = 0.0
         self.need_start = True
 
+    def box_text(self, res):
+        if not res or not res.box:
+            return ""
+        x, y, bw, bh = res.box
+        return " 目标框(%d,%d)-(%d,%d)" % (round(x), round(y),
+                                         round(x + bw), round(y + bh))
+
     def tag_of(self, loc):
         if loc["source"] == "ocr":
             return "汉字「%s」" % loc["text"]
@@ -318,8 +327,9 @@ class Runner:
         }
         self.episode_open = True
         self.need_start = False
-        self.logline("第%02d跳 距离%.0fpx 动作%d 系数%.2f 按压%.0fms 熵%.2f"
-                     % (self.jumps_in_episode + 1, d, action, scale, ms, ent))
+        self.logline("第%02d跳 距离%.0fpx 动作%d 系数%.2f 按压%.0fms 熵%.2f %s%s"
+                     % (self.jumps_in_episode + 1, d, action, scale, ms, ent,
+                        res.method, self.box_text(res)))
         emit({"t": "res", "kind": "press", "ms": ms, "action": action,
               "scale": scale, "entropy": ent,
               "x": float(x0) + w * 0.5, "y": float(h) * 0.68,
@@ -381,9 +391,9 @@ class Runner:
         self.policy.update(info["feat"], info["action"], reward)
         self.jumps_in_episode += 1
         self.episode_reward += reward
-        self.logline("第%02d跳 目标%.0fpx 横向偏差%.0fpx 奖励%.3f 平均%.3f"
+        self.logline("第%02d跳 目标%.0fpx 横向偏差%.0fpx 奖励%.3f 平均%.3f %s"
                      % (self.jumps_in_episode, info["d"], err, reward,
-                        float(np.mean(self.policy.rewards[-20:]))))
+                        float(np.mean(self.policy.rewards[-20:])), after.method))
         emit({"t": "res", "kind": "ok", "reward": reward, "err": err,
               "det": det_of(after, False, reward=reward, err=err),
               "stats": self.base_stats()})
