@@ -547,6 +547,22 @@ static void random_point(HWND hwnd, int* ox, int* oy) {
     *oy = pt.y + (int)(h * fy);
 }
 
+int is_game_process(HWND hwnd) {
+    DWORD pid = 0;
+    GetWindowThreadProcessId(hwnd, &pid);
+    if (!pid) return 0;
+    HANDLE p = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+    if (!p) return 0;
+    wchar_t path[MAX_PATH];
+    DWORD len = MAX_PATH;
+    BOOL ok = QueryFullProcessImageNameW(p, 0, path, &len);
+    CloseHandle(p);
+    if (!ok) return 0;
+    return wcsstr(path, L"WeChatAppEx.exe") != NULL ||
+           wcsstr(path, L"WeChat.exe") != NULL ||
+           wcsstr(path, L"Weixin.exe") != NULL;
+}
+
 static DWORD WINAPI worker_main(LPVOID param) {
     (void)param;
     FrameBuf before = {0}, after = {0}, prev = {0}, cur = {0};
@@ -585,9 +601,9 @@ static DWORD WINAPI worker_main(LPVOID param) {
         }
         wchar_t title[256];
         if (GetWindowTextW(hwnd, title, 256) <= 0) title[0] = 0;
-        if (!wcsstr(title, L"跳一跳") && !wcsstr(title, L"小程序") &&
-            !wcsstr(title, L"微信")) {
-            log_line(L"目标窗口不是跳一跳（%s），请重新选择", title);
+        if ((!wcsstr(title, L"跳一跳") && !wcsstr(title, L"小程序") &&
+             !wcsstr(title, L"微信")) || !is_game_process(hwnd)) {
+            log_line(L"目标窗口不是微信小程序（%s），请重新选择", title);
             g_state = ST_WAITING;
             Sleep(700);
             continue;

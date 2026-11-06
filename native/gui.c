@@ -25,6 +25,7 @@ volatile LONG g_state = ST_STOPPED;
 
 double g_base_coef = 1.0;
 int g_greedy = 0;
+static HHOOK g_hook = NULL;
 HWND g_target = NULL;
 wchar_t g_target_title[256] = L"";
 
@@ -137,18 +138,40 @@ BOOL CALLBACK enum_proc(HWND hwnd, LPARAM lp) {
     return TRUE;
 }
 
+static int is_wechat_window(HWND hwnd) {
+    DWORD pid = 0;
+    GetWindowThreadProcessId(hwnd, &pid);
+    if (!pid) return 0;
+    HANDLE p = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+    if (!p) return 0;
+    wchar_t path[MAX_PATH];
+    DWORD len = MAX_PATH;
+    BOOL ok = QueryFullProcessImageNameW(p, 0, path, &len);
+    CloseHandle(p);
+    if (!ok) return 0;
+    return wcsstr(path, L"WeChatAppEx.exe") != NULL ||
+           wcsstr(path, L"WeChat.exe") != NULL ||
+           wcsstr(path, L"Weixin.exe") != NULL;
+}
+
 static void refresh_windows(void) {
     g_win_count = 0;
     EnumWindows(enum_proc, 0);
     g_win_sel = -1;
-    for (int i = 0; i < g_win_count; i++) {
-        if (wcsstr(g_wins[i].title, L"跳一跳") || wcsstr(g_wins[i].title, L"小程序") ||
-            wcsstr(g_wins[i].title, L"微信")) {
-            g_win_sel = i;
-            break;
+    for (int pass = 0; pass < 2 && g_win_sel < 0; pass++) {
+        for (int i = 0; i < g_win_count; i++) {
+            if (!is_wechat_window(g_wins[i].hwnd)) continue;
+            if (pass == 0 && wcsstr(g_wins[i].title, L"跳一跳")) {
+                g_win_sel = i;
+                break;
+            }
+            if (pass == 1 && (wcsstr(g_wins[i].title, L"小程序") ||
+                              wcsstr(g_wins[i].title, L"微信小程序"))) {
+                g_win_sel = i;
+                break;
+            }
         }
     }
-    if (g_win_sel < 0 && g_win_count > 0) g_win_sel = 0;
     if (g_win_sel >= 0) {
         g_target = g_wins[g_win_sel].hwnd;
         wcsncpy(g_target_title, g_wins[g_win_sel].title, 255);
@@ -730,6 +753,25 @@ static void do_button(int id) {
     InvalidateRect(g_main, NULL, FALSE);
 }
 
+static LRESULT CALLBACK hotkey_proc(int code, WPARAM wp, LPARAM lp) {
+    if (code < 0) return CallNextHookEx(g_hook, code, wp, lp);
+    if ((wp == WM_KEYDOWN || wp == WM_SYSKEYDOWN)) {
+        KBDLLHOOKSTRUCT* k = (KBDLLHOOKSTRUCT*)lp;
+        if (k->vkCode == VK_SPACE) {
+            HWND fg = GetForegroundWindow();
+            if (g_running &&
+                !(GetKeyState(VK_CONTROL) & 0x8000) &&
+                !(GetKeyState(VK_MENU) & 0x8000) &&
+                !(GetKeyState(VK_SHIFT) & 0x8000) &&
+                (fg == g_main || fg == g_target)) {
+                PostMessage(g_main, APP_HOTKEY, 0, 0);
+                return 1;
+            }
+        }
+    }
+    return CallNextHookEx(g_hook, code, wp, lp);
+}
+
 static LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     switch (msg) {
     case WM_CREATE:
@@ -819,11 +861,18 @@ static LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     case APP_STATS:
         InvalidateRect(hwnd, NULL, FALSE);
         return 0;
+    case APP_HOTKEY:
+        if (g_running) do_button(BTN_PAUSE);
+        return 0;
     case WM_CLOSE:
         worker_stop();
         DestroyWindow(hwnd);
         return 0;
     case WM_DESTROY:
+        if (g_hook) {
+            UnhookWindowsHookEx(g_hook);
+            g_hook = NULL;
+        }
         PostQuitMessage(0);
         return 0;
     }
@@ -874,6 +923,11 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show) {
                              NULL, NULL, inst, NULL);
     if (!g_main) return 1;
 
+    g_hook = SetWindowsHookExW(WH_KEYBOARD_LL, hotkey_proc,
+                               GetModuleHandleW(NULL), 0);
+    log_line(g_hook ? L"全局快捷键已启用：游戏窗口在前台时按空格暂停/继续"
+                    : L"全局快捷键注册失败，仅本窗口在前台时按空格生效");
+
     g_f_sec = make_font(12, FW_BOLD);
     g_f_body = make_font(11, FW_NORMAL);
     g_f_small = make_font(9, FW_NORMAL);
@@ -889,7 +943,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show) {
     log_line(L"强化学习模式：策略网络在 Python 侧训练，C 侧负责抓图与精确按压");
     log_line(L"奖励 = 落点离目标中心越近越高，跳到中心为 1.00，掉落为 0.00");
     log_line(L"结算页会通过中文 OCR 识别「再玩一局」并自动点击继续训练");
-    log_line(L"快捷键：空格 开始/暂停，Esc 停止，R 刷新窗口");
+    log_line(L"快捷键：空格 开始/暂停（游戏窗口在前台时也生效），Esc 停止，R 刷新窗口");
 
     ShowWindow(g_main, show);
     UpdateWindow(g_main);

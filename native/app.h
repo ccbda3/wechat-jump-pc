@@ -7,6 +7,7 @@
 #define APP_LOG   (WM_APP + 1)
 #define APP_FRAME (WM_APP + 2)
 #define APP_STATS (WM_APP + 3)
+#define APP_HOTKEY (WM_APP + 4)
 
 #define MAX_LOG 400
 #define MAX_WIN 48
