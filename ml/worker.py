@@ -109,6 +109,10 @@ class Runner:
         self.wait_count = 0
         self.last_ocr = 0.0
         self.last_click = 0.0
+        self.score = 0
+        self.best_score = 0
+        self.combo = 0
+        self.center_px = 8.0
         self.episode_open = False
         self._init_log()
 
@@ -149,7 +153,24 @@ class Runner:
     def base_stats(self):
         s = self.policy.stats()
         s["episode_jumps"] = self.jumps_in_episode
+        s["score"] = self.score
+        s["best_score"] = self.best_score
         return s
+
+    def add_score(self, err):
+        if self.jumps_in_episode == 0:
+            self.score = 0
+            self.combo = 0
+        if err <= self.center_px:
+            self.combo += 1
+            gain = min(2 * self.combo, 10)
+        else:
+            self.combo = 0
+            gain = 1
+        self.score += gain
+        if self.score > self.best_score:
+            self.best_score = self.score
+        self.logline("得分 +%d 当前 %d（最高 %d）" % (gain, self.score, self.best_score))
 
     def handle_init(self, req):
         s = self.policy.stats()
@@ -334,6 +355,15 @@ class Runner:
             emit({"t": "res", "kind": "ok", "reward": None,
                   "det": det_of(after, False), "stats": self.base_stats()})
             return
+        if err > block["width"] * 0.45:
+            self.policy.update(info["feat"], info["action"], 0.0)
+            self.logline("跳出方块：奖励 0.00")
+            self.close_episode()
+            emit({"t": "res", "kind": "ok", "reward": 0.0, "err": err,
+                  "det": det_of(after, True, reward=0.0, err=err),
+                  "stats": self.base_stats()})
+            return
+        self.add_score(err)
         self.policy.update(info["feat"], info["action"], reward)
         self.jumps_in_episode += 1
         self.episode_reward += reward

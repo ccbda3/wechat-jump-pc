@@ -131,32 +131,33 @@ def bg_color(bgr):
 
 
 def find_round_back(bgr):
-    h, w = bgr.shape[:2]
-    gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
-    mask = (gray > 235).astype(np.uint8)
-    top = int(h * 0.78)
-    left = int(w * 0.35)
-    right = int(w * 0.95)
+    sub, x0 = game_crop(bgr)
+    h, w = sub.shape[:2]
+    gray = cv2.cvtColor(sub, cv2.COLOR_BGR2GRAY)
+    mask = (gray > 232).astype(np.uint8)
+    top = int(h * 0.70)
+    left = int(w * 0.02)
+    right = int(w * 0.34)
     roi = mask[top:, left:right]
     n, labels, stats, cents = cv2.connectedComponentsWithStats(roi, 8)
     best = None
     for i in range(1, n):
         x, y, bw, bh, area = [int(v) for v in stats[i]]
-        if bw < 0.024 * w or bw > 0.095 * w:
+        if bw < 0.045 * w or bw > 0.17 * w:
             continue
-        if bh < 0.024 * w or bh > 0.095 * w:
+        if bh < 0.020 * h or bh > 0.10 * h:
             continue
         ar = bw / max(bh, 1)
-        if ar < 0.85 or ar > 1.20:
+        if ar < 0.80 or ar > 1.25:
             continue
-        if area < 0.62 * bw * bh:
+        if area < 0.58 * bw * bh:
             continue
         if best is None or area > best[0]:
             best = (area, x, y, bw, bh)
     if best is None:
         return None
     _, x, y, bw, bh = best
-    return (left + x + bw / 2.0, top + y + bh / 2.0)
+    return (x0 + left + x + bw / 2.0, top + y + bh / 2.0)
 
 
 def find_button(bgr):

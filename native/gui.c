@@ -304,8 +304,8 @@ static void do_layout(RECT* c, Layout* L) {
     int rx = L->panel.right + S(16);
     int rw = c->right - m - rx;
     int gap = S(10);
-    int cw = (rw - gap * 5) / 6;
-    for (int i = 0; i < 6; i++) {
+    int cw = (rw - gap * 6) / 7;
+    for (int i = 0; i < 7; i++) {
         L->cards[i].left = rx + i * (cw + gap);
         L->cards[i].top = m;
         L->cards[i].right = L->cards[i].left + cw;
@@ -616,23 +616,26 @@ static void paint(HWND hwnd) {
               DT_LEFT | DT_TOP | DT_SINGLELINE | DT_END_ELLIPSIS);
 
     wchar_t v[64];
+    _snwprintf(v, 63, L"%d", (int)st.score);
+    v[63] = 0;
+    draw_card(mem, g_layout.cards[0], L"分数", v, C_YELLOW);
+    _snwprintf(v, 63, L"%d", (int)st.best_score);
+    v[63] = 0;
+    draw_card(mem, g_layout.cards[1], L"最高分", v, C_GOOD);
     _snwprintf(v, 63, L"%d", (int)st.episodes);
     v[63] = 0;
-    draw_card(mem, g_layout.cards[0], L"局数", v, C_FG);
+    draw_card(mem, g_layout.cards[2], L"局数", v, C_FG);
     _snwprintf(v, 63, L"%d", (int)st.jumps);
     v[63] = 0;
-    draw_card(mem, g_layout.cards[1], L"跳跃数", v, C_FG);
+    draw_card(mem, g_layout.cards[3], L"跳跃数", v, C_FG);
     _snwprintf(v, 63, L"%.2f", st.mean);
     v[63] = 0;
-    draw_card(mem, g_layout.cards[2], L"平均奖励", v, C_ACCENT);
-    _snwprintf(v, 63, L"%.2f", st.best);
-    v[63] = 0;
-    draw_card(mem, g_layout.cards[3], L"最佳奖励", v, C_GOOD);
+    draw_card(mem, g_layout.cards[4], L"平均奖励", v, C_ACCENT);
     _snwprintf(v, 63, L"%.2f", st.entropy);
     v[63] = 0;
-    draw_card(mem, g_layout.cards[4], L"策略熵", v, C_FG);
+    draw_card(mem, g_layout.cards[5], L"策略熵", v, C_FG);
 
-    RECT crd = g_layout.cards[5];
+    RECT crd = g_layout.cards[6];
     round_box(mem, crd, C_CARD, C_STROKE, S(10));
     RECT lr = crd;
     lr.left += S(12);

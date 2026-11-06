@@ -35,6 +35,7 @@ typedef struct {
 
 typedef struct {
     double episodes, jumps, mean, best, entropy, scale, reward, episode_jumps;
+    double score, best_score;
     char model[40];
 } StatInfo;
 
@@ -52,7 +53,7 @@ typedef struct {
     RECT btn_stop;
     RECT btn_pause;
     RECT status;
-    RECT cards[6];
+    RECT cards[7];
     RECT preview;
     RECT log_box;
 } Layout;

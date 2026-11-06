@@ -459,6 +459,8 @@ static int parse_res(const char* line, Res* r) {
     if (jget_num(line, "entropy", &v)) r->st.entropy = v;
     if (jget_num(line, "scale", &v)) r->st.scale = v;
     if (jget_num(line, "episode_jumps", &v)) r->st.episode_jumps = v;
+    if (jget_num(line, "score", &v)) r->st.score = v;
+    if (jget_num(line, "best_score", &v)) r->st.best_score = v;
     jget_str(line, "model", r->st.model, sizeof(r->st.model));
     return 1;
 }
