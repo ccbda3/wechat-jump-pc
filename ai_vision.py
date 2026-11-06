@@ -152,7 +152,7 @@ def detect_board(bgr, piece, cfg=None):
 
     if piece is not None:
         px, py = piece[0], piece[1]
-        pad_x, pad_y = int(w * 0.10), int(h * 0.075)
+        pad_x, pad_y = int(w * 0.09), int(h * 0.07)
         mask[max(0, int(py - pad_y * 2)):min(h, int(py + pad_y)),
              max(0, int(px - pad_x)):min(w, int(px + pad_x))] = 0
 
@@ -176,11 +176,15 @@ def detect_board(bgr, piece, cfg=None):
             continue
         score = float(y) - area / float(w * h) * h
         if best is None or score < best[0]:
-            best = (score, x, y, bw, bh, cx)
+            best = (score, x, y, bw, bh, i)
     if best is None:
         return None
-    _, x, y, bw, bh, cx = best
-    # 立体方块的落脚点在顶面中心（轮廓上部约 30% 处），而非整个连通域质心
+    _, x, y, bw, bh, idx = best
+    comp = labels[y:y + bh, x:x + bw] == idx
+    ry = np.nonzero(comp.any(axis=1))[0]
+    top = int(ry[0]) if ry.size else 0
+    tx = np.nonzero(comp[top:top + 4])[1]
+    cx = float(tx.mean()) + x if tx.size else x + bw / 2.0
     board_y = y + bh * 0.30
     conf = min(1.0, 0.55 + bw / float(w) * 0.6)
     return (cx, board_y, conf, (x, y, bw, bh))
