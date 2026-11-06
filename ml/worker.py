@@ -13,7 +13,7 @@ import cv2
 import numpy as np
 
 from ai_vision import VisionConfig, analyze, detect_game_over
-from policy import (MAX_PRESS_MS, MIN_PRESS_MS, Policy, legacy_press_ms)
+from policy import MAX_PRESS_MS, MIN_PRESS_MS, MS_PER_PX, MS_REF_W, Policy
 from ocr import OcrReader, game_crop
 from landing import landing_reward
 
@@ -59,7 +59,7 @@ def features(res, w, h, base_unit, prev_reward, x0=0):
 
 def analyze_view(cfg, frame):
     sub, x0 = game_crop(frame)
-    res = analyze(sub, cfg, prefer="legacy")
+    res = analyze(sub, cfg, prefer="cv")
     if x0:
         if res.piece:
             res.piece = (res.piece[0] + x0, res.piece[1])
@@ -195,7 +195,7 @@ class Runner:
         h = frame.shape[0]
         now = time.time()
         valid_game = (res.piece is not None and res.board is not None
-                      and res.method != "game_over" and res.confidence >= 0.75)
+                      and res.method != "game_over" and res.confidence >= 0.65)
         want_ocr = (not valid_game) and (over or self.need_start
                     or res.piece is None or res.board is None
                     or (now - self.last_ocr) >= 1.0)
@@ -261,7 +261,7 @@ class Runner:
             emit({"t": "res", "kind": "wait", "det": det_of(res, False),
                   "stats": self.base_stats()})
             return
-        if res.method != "legacy" and res.confidence < 0.8:
+        if res.method != "legacy" and res.confidence < 0.65:
             self.note_wait("识别置信度过低 %.2f" % res.confidence, res)
             emit({"t": "res", "kind": "wait", "det": det_of(res, False),
                   "stats": self.base_stats()})
@@ -273,8 +273,7 @@ class Runner:
             emit({"t": "res", "kind": "wait", "det": det_of(res, False),
                   "stats": self.base_stats()})
             return
-        head = max(22.0, w / 8.0)
-        base_unit = legacy_press_ms(d, head, 1.0)
+        base_unit = MS_PER_PX * (w / MS_REF_W) * d
         feat = features(res, w, h, base_unit, self.policy.last_reward, x0)
         action, scale, ent = self.policy.act(feat, greedy)
         ms = min(max(base_unit * base_coef * scale, MIN_PRESS_MS), MAX_PRESS_MS)

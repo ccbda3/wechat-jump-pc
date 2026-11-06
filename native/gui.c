@@ -23,7 +23,7 @@ volatile LONG g_paused = 0;
 volatile LONG g_stop_req = 0;
 volatile LONG g_state = ST_STOPPED;
 
-double g_base_coef = 2.0;
+double g_base_coef = 1.0;
 int g_greedy = 0;
 HWND g_target = NULL;
 wchar_t g_target_title[256] = L"";

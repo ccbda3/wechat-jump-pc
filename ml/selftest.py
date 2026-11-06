@@ -11,7 +11,7 @@ import numpy as np
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
-from ml.policy import ACTIONS, FEATURES, HIDDEN, Policy, SCALES, legacy_press_ms
+from ml.policy import ACTIONS, FEATURES, HIDDEN, MS_PER_PX, MS_REF_W, Policy, SCALES
 from ai_vision import VisionConfig, analyze
 
 W, H = 600, 900
@@ -146,33 +146,36 @@ def test_worker():
         print("初始化：kind=%s 模型=%s" % (init["kind"], init["stats"]["model"]))
 
         send(proc, {"t": "frame", "id": 1, "w": W, "h": H, "phase": "before",
-                    "base": 2.0, "greedy": 0, "settled": 1}, make_frame())
+                    "base": 1.0, "greedy": 0, "settled": 1}, make_frame())
         press = read(proc)
-        print("决策：kind=%s ms=%.0f 动作=%d 缩放=%.2f"
+        print("决策：kind=%s ms=%.0f 动作=%d 缩放=%.2f 距离=%.0f"
               % (press["kind"], press.get("ms", 0), press.get("action", -1),
-                 press.get("scale", 0)))
+                 press.get("scale", 0), press["det"].get("d", 0)))
         if press["kind"] != "press":
             raise SystemExit("未输出按压动作")
+        want = MS_PER_PX * (W / MS_REF_W) * press["det"]["d"] * press.get("scale", 1.0)
+        if abs(press["ms"] - want) > 30:
+            raise SystemExit("按压时长与距离模型不符 %.0f != %.0f" % (press["ms"], want))
 
-        base_unit = legacy_press_ms(press["det"]["d"], W / 8.0, 1.0)
         send(proc, {"t": "frame", "id": 1, "w": W, "h": H, "phase": "after",
-                    "base": 2.0, "greedy": 0, "settled": 1},
+                    "base": 1.0, "greedy": 0, "settled": 1},
              make_frame(382.0, -116.0))
         after = read(proc)
-        print("反馈：kind=%s 奖励=%s 偏差=%s" % (after["kind"], after.get("reward"),
-                                              after.get("err")))
+        print("反馈：kind=%s 奖励=%s 偏差=%s"
+              % (after["kind"], after.get("reward"), after.get("err")))
         if after["kind"] != "ok" or after.get("reward") is None:
             raise SystemExit("落点反馈未产生奖励")
+        base_unit = press["ms"]
 
         send(proc, {"t": "frame", "id": 2, "w": W, "h": H, "phase": "before",
-                    "base": 2.0, "greedy": 1, "settled": 1}, game_over_frame())
+                    "base": 1.0, "greedy": 1, "settled": 1}, game_over_frame())
         over = read(proc)
         print("结算：kind=%s 文本=%s 点击=(%.0f, %.0f)"
               % (over["kind"], over.get("text", ""), over.get("x", -1),
                  over.get("y", -1)))
         if over["kind"] != "restart":
             raise SystemExit("结算页未触发自动重开")
-        print("协议联调通过，base_unit=%.0f" % base_unit)
+        print("协议联调通过，首跳按压=%.0fms" % base_unit)
     finally:
         try:
             send(proc, {"t": "quit"})
