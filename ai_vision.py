@@ -133,6 +133,35 @@ def detect_piece(bgr, cfg=None):
 
 # ── 目标台面 ────────────────────────────────────────────────
 
+def find_top_spot(bgr, bbox):
+    h, w = bgr.shape[:2]
+    x, y, bw, bh = [int(v) for v in bbox]
+    y1 = min(h, y + int(bh * 0.55))
+    roi = bgr[y:y1, x:x + bw]
+    if roi.size == 0:
+        return None
+    hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
+    mask = ((hsv[:, :, 2] > 212) & (hsv[:, :, 1] < 48)).astype(np.uint8)
+    n, labels, stats, cents = cv2.connectedComponentsWithStats(mask, 8)
+    best = None
+    for i in range(1, n):
+        bx, by, bwd, bht, area = [int(v) for v in stats[i]]
+        if area < 24 or area > 0.035 * bw * bh:
+            continue
+        if bwd < 8 or bht < 4:
+            continue
+        ar = bwd / max(bht, 1)
+        if ar < 1.05 or ar > 3.2:
+            continue
+        if area < 0.60 * bwd * bht:
+            continue
+        if best is None or area > best[0]:
+            best = (area, x + float(cents[i][0]), y + float(cents[i][1]))
+    if best is None:
+        return None
+    return (best[1], best[2])
+
+
 def detect_board(bgr, piece, cfg=None):
     """直接检测台面轮廓并取其顶面中心，返回 (x, y, 置信度, bbox) 或 None。"""
     cfg = cfg or VisionConfig.load()
@@ -158,6 +187,7 @@ def detect_board(bgr, piece, cfg=None):
 
     n, labels, stats, cents = cv2.connectedComponentsWithStats(mask, 8)
     px = piece[0] if piece is not None else w / 2.0
+    py = piece[1] if piece is not None else h / 2.0
     best = None
     for i in range(1, n):
         x, y, bw, bh, area = [int(v) for v in stats[i]]
@@ -174,7 +204,10 @@ def detect_board(bgr, piece, cfg=None):
         cx = float(cents[i][0])
         if abs(cx - px) < w * 0.06:
             continue
-        score = float(y) - area / float(w * h) * h
+        face_y = y + bh * 0.30
+        if face_y >= py - h * 0.02:
+            continue
+        score = math.hypot(cx - px, face_y - py)
         if best is None or score < best[0]:
             best = (score, x, y, bw, bh, i)
     if best is None:
@@ -187,6 +220,9 @@ def detect_board(bgr, piece, cfg=None):
     cx = float(tx.mean()) + x if tx.size else x + bw / 2.0
     board_y = y + bh * 0.30
     conf = min(1.0, 0.55 + bw / float(w) * 0.6)
+    spot = find_top_spot(bgr, (x, y, bw, bh))
+    if spot:
+        return (spot[0], spot[1], conf, (x, y, bw, bh))
     return (cx, board_y, conf, (x, y, bw, bh))
 
 
