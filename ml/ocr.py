@@ -86,21 +86,22 @@ class OcrReader:
 
     def score(self, frame):
         sub, _ = game_crop(frame)
-        return self.score_crop(sub)
+        v, _ = self.score_crop(sub)
+        return v
 
     def score_crop(self, sub):
         tpl = self.templates()
         if not tpl:
-            return None
+            return None, []
         h, w = sub.shape[:2]
-        roi = sub[int(h * 0.10):int(h * 0.27), int(w * 0.02):int(w * 0.36)]
+        roi = sub[int(h * 0.10):int(h * 0.27), int(w * 0.02):int(w * 0.52)]
         if roi.size == 0:
-            return None
+            return None, []
         gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
         mask = (gray < 150).astype(np.uint8)
         boxes = merge_boxes(mask)
         if not boxes:
-            return None
+            return None, []
         digits = ""
         for box in boxes:
             g = normalize_glyph(gray, box)
@@ -113,15 +114,18 @@ class OcrReader:
                     if iou > scores.get(d, 0.0):
                         scores[d] = iou
             if not scores:
-                return None
+                return None, []
             best = max(scores.items(), key=lambda kv: kv[1])
             second = max([v for k, v in scores.items() if k != best[0]] or [0.0])
             if best[1] < 0.62 or (best[1] - second) < 0.02:
-                return None
+                return None, []
             digits += str(best[0])
         if not digits:
-            return None
-        return int(digits)
+            return None, []
+        off_x = int(w * 0.02)
+        off_y = int(h * 0.10)
+        out = [(b[0] + off_x, b[1] + off_y, b[2], b[3]) for b in boxes]
+        return int(digits), out
 
     def _init(self):
         if self._ready is not None:

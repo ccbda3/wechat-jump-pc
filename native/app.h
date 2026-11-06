@@ -32,6 +32,7 @@ typedef struct {
     double px, py, bx, by, d, conf, reward, err;
     char method[24];
     char text[64];
+    char digits[192];
 } DetInfo;
 
 typedef struct {

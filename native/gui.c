@@ -389,6 +389,7 @@ static void draw_preview(HDC dc, Layout* L) {
     EnterCriticalSection(&g_cs);
     int vw = g_view.w;
     int vh = g_view.h;
+    double score_val = g_stats.score;
     int have = (g_view.data != NULL && vw > 0 && vh > 0);
     DetInfo det = g_det;
     if (have) {
@@ -455,6 +456,51 @@ static void draw_preview(HDC dc, Layout* L) {
             tr2.right = tr2.left + S(240);
             tr2.bottom = tr2.top + S(20);
             draw_text(dc, tr2, buf, g_f_small, C_GOOD, DT_LEFT | DT_TOP | DT_SINGLELINE);
+        }
+        if (det.digits[0]) {
+            char* p = det.digits;
+            int count = 0;
+            int fx = -1, fy = -1;
+            HPEN dpen = CreatePen(PS_SOLID, S(1), RGB(120, 220, 120));
+            HGDIOBJ dop = SelectObject(dc, dpen);
+            HGDIOBJ dob = SelectObject(dc, GetStockObject(NULL_BRUSH));
+            while (*p && count < 8) {
+                long v[4] = {0, 0, 0, 0};
+                char* end = p;
+                for (int k = 0; k < 4; k++) {
+                    v[k] = strtol(p, &end, 10);
+                    if (end == p) break;
+                    p = end;
+                    while (*p == ',' || *p == ';') p++;
+                }
+                if (v[2] > 0 && v[3] > 0) {
+                    int x0 = dx + (int)(v[0] * sc);
+                    int y0 = dy + (int)(v[1] * sc);
+                    int x1 = dx + (int)((v[0] + v[2]) * sc);
+                    int y1 = dy + (int)((v[1] + v[3]) * sc);
+                    Rectangle(dc, x0, y0, x1, y1);
+                    if (fx < 0) {
+                        fx = x0;
+                        fy = y0;
+                    }
+                    count++;
+                }
+            }
+            SelectObject(dc, dob);
+            SelectObject(dc, dop);
+            DeleteObject(dpen);
+            if (fx >= 0) {
+                wchar_t buf[64];
+                _snwprintf(buf, 63, L"分数识别 %d", (int)score_val);
+                buf[63] = 0;
+                RECT sr;
+                sr.left = fx;
+                sr.top = fy - S(20);
+                sr.right = fx + S(200);
+                sr.bottom = sr.top + S(18);
+                draw_text(dc, sr, buf, g_f_small, RGB(120, 220, 120),
+                          DT_LEFT | DT_TOP | DT_SINGLELINE);
+            }
         }
         if (det.reward > 0.0 && det.err > 0.0) {
             wchar_t buf[160];

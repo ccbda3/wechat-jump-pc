@@ -87,7 +87,7 @@ def analyze_view(cfg, frame):
     return res, sub, x0
 
 
-def det_of(res, over, reward=None, err=None, text=None):
+def det_of(res, over, reward=None, err=None, text=None, digits=None):
     d = {
         "over": 1 if over else 0,
         "method": res.method if res else "failed",
@@ -108,6 +108,10 @@ def det_of(res, over, reward=None, err=None, text=None):
         d["err"] = round(float(err), 1)
     if text:
         d["ocr"] = text
+    if digits:
+        d["digits"] = ";".join("%d,%d,%d,%d" % (round(b[0]), round(b[1]),
+                                               round(b[2]), round(b[3]))
+                               for b in digits)
     return d
 
 
@@ -387,7 +391,7 @@ class Runner:
                   "det": det_of(after, True, reward=0.0, err=err),
                   "stats": self.base_stats()})
             return
-        v = self.ocr.score(frame)
+        v, dbx = self.ocr.score_crop(sub_after)
         if v is None:
             gain = self.add_score(err)
             tag = "（估算+%d）" % gain
@@ -408,7 +412,8 @@ class Runner:
                         float(np.mean(self.policy.rewards[-20:])), after.method,
                         self.score, tag))
         emit({"t": "res", "kind": "ok", "reward": reward, "err": err,
-              "det": det_of(after, False, reward=reward, err=err),
+              "det": det_of(after, False, reward=reward, err=err,
+                            digits=[(b[0] + ax0, b[1], b[2], b[3]) for b in dbx]),
               "stats": self.base_stats()})
 
     def handle_frame(self, req, frame):

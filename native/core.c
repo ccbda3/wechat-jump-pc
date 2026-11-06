@@ -451,6 +451,7 @@ static int parse_res(const char* line, Res* r) {
     if (r->has_err) r->det.err = r->err;
     jget_str(line, "method", r->det.method, sizeof(r->det.method));
     jget_str(line, "ocr", r->det.text, sizeof(r->det.text));
+    jget_str(line, "digits", r->det.digits, sizeof(r->det.digits));
 
     if (jget_num(line, "episodes", &v)) r->st.episodes = v;
     if (jget_num(line, "jumps", &v)) r->st.jumps = v;
