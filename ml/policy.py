@@ -13,6 +13,7 @@ MIN_PRESS_MS = 140.0
 MAX_PRESS_MS = 1150.0
 MS_PER_PX = 2.19
 MS_REF_W = 655.0
+FREEZE_POLICY = True
 
 
 def legacy_press_ms(distance_px, head_diameter, coefficient=1.0):
@@ -24,7 +25,8 @@ def legacy_press_ms(distance_px, head_diameter, coefficient=1.0):
 
 
 class Policy:
-    def __init__(self, path=None, lr=0.10, seed=1, baseline=0.55):
+    def __init__(self, path=None, lr=0.10, seed=1, baseline=0.55, frozen=None):
+        self.frozen = FREEZE_POLICY if frozen is None else bool(frozen)
         self.path = path
         self.lr = float(lr)
         self.rng = np.random.default_rng(seed)
@@ -57,7 +59,7 @@ class Policy:
     def act(self, x, greedy=False):
         h, p = self.forward(x)
         ent = float(-(p * np.log(p + 1e-9)).sum())
-        if greedy:
+        if greedy or self.frozen:
             a = int(np.argmax(p))
         else:
             a = int(self.rng.choice(ACTIONS, p=p))
@@ -66,23 +68,24 @@ class Policy:
         return a, float(SCALES[a]), ent
 
     def update(self, x, action, reward, entropy_bonus=0.004):
-        h, p = self.forward(x)
         adv = float(reward) - self.baseline
         adv = max(-1.5, min(1.5, adv))
-        g = -p.copy()
-        g[action] += 1.0
-        g *= adv
-        if entropy_bonus:
-            ent = float(-(p * np.log(p + 1e-9)).sum())
-            g += entropy_bonus * (-p * (np.log(p + 1e-9) + ent))
-        dh = (self.w2.T @ g) * (1.0 - h * h)
-        self.w2 += self.lr * np.outer(g, h)
-        self.b2 += self.lr * g
-        self.w1 += self.lr * np.outer(dh, x)
-        self.b1 += self.lr * dh
-        self.w1 *= 0.9997
-        self.w2 *= 0.9997
-        self.baseline += 0.10 * (float(reward) - self.baseline)
+        if not self.frozen:
+            h, p = self.forward(x)
+            g = -p.copy()
+            g[action] += 1.0
+            g *= adv
+            if entropy_bonus:
+                ent = float(-(p * np.log(p + 1e-9)).sum())
+                g += entropy_bonus * (-p * (np.log(p + 1e-9) + ent))
+            dh = (self.w2.T @ g) * (1.0 - h * h)
+            self.w2 += self.lr * np.outer(g, h)
+            self.b2 += self.lr * g
+            self.w1 += self.lr * np.outer(dh, x)
+            self.b1 += self.lr * dh
+            self.w1 *= 0.9997
+            self.w2 *= 0.9997
+            self.baseline += 0.10 * (float(reward) - self.baseline)
         self.jumps += 1
         self.total_reward += float(reward)
         self.last_reward = float(reward)

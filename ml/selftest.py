@@ -86,7 +86,7 @@ def test_policy():
     tmp = os.path.join(tempfile.gettempdir(), "jump_rl_selftest_model.json")
     if os.path.exists(tmp):
         os.remove(tmp)
-    policy = Policy(path=tmp, lr=0.12, seed=2)
+    policy = Policy(path=tmp, lr=0.12, seed=2, frozen=False)
     x = np.zeros(FEATURES)
     x[0] = 1.0
     x[1] = 0.30
