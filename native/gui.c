@@ -788,6 +788,42 @@ static DWORD WINAPI preview_main(LPVOID param) {
     return 0;
 }
 
+static void paint_preview_fast(void) {
+    if (!g_main) return;
+    static HDC mem = NULL;
+    static HBITMAP bmp = NULL;
+    static int mw = 0, mh = 0;
+    RECT pr = g_layout.preview;
+    int w = pr.right - pr.left;
+    int h = pr.bottom - pr.top;
+    if (w <= 0 || h <= 0) return;
+    HDC dc = GetDC(g_main);
+    if (!dc) return;
+    if (!mem || w != mw || h != mh) {
+        if (mem) {
+            DeleteDC(mem);
+            mem = NULL;
+        }
+        if (bmp) {
+            DeleteObject(bmp);
+            bmp = NULL;
+        }
+        mem = CreateCompatibleDC(dc);
+        bmp = CreateCompatibleBitmap(dc, w, h);
+        mw = w;
+        mh = h;
+    }
+    HGDIOBJ old = SelectObject(mem, bmp);
+    RECT full = {0, 0, w, h};
+    fill_rect(mem, full, C_BG);
+    SetViewportOrgEx(mem, -pr.left, -pr.top, NULL);
+    draw_preview(mem, &g_layout);
+    SetViewportOrgEx(mem, 0, 0, NULL);
+    BitBlt(dc, pr.left, pr.top, w, h, mem, 0, 0, SRCCOPY);
+    SelectObject(mem, old);
+    ReleaseDC(g_main, dc);
+}
+
 static LRESULT CALLBACK hotkey_proc(int code, WPARAM wp, LPARAM lp) {
     if (code < 0) return CallNextHookEx(g_hook, code, wp, lp);
     if ((wp == WM_KEYDOWN || wp == WM_SYSKEYDOWN)) {
@@ -893,13 +929,7 @@ static LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         }
         return 0;
     case APP_FRAME:
-        if (g_main) {
-            HDC fdc = GetDC(g_main);
-            if (fdc) {
-                draw_preview(fdc, &g_layout);
-                ReleaseDC(g_main, fdc);
-            }
-        }
+        paint_preview_fast();
         return 0;
     case APP_STATS:
         InvalidateRect(hwnd, NULL, FALSE);
