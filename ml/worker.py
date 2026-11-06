@@ -186,7 +186,7 @@ class Runner:
         self.score += gain
         if self.score > self.best_score:
             self.best_score = self.score
-        self.logline("得分 +%d 当前 %d（最高 %d）" % (gain, self.score, self.best_score))
+        return gain
 
     def handle_init(self, req):
         s = self.policy.stats()
@@ -387,15 +387,26 @@ class Runner:
                   "det": det_of(after, True, reward=0.0, err=err),
                   "stats": self.base_stats()})
             return
-        self.add_score(err)
+        v = self.ocr.score(frame)
+        if v is None:
+            gain = self.add_score(err)
+            tag = "（估算+%d）" % gain
+        else:
+            if self.jumps_in_episode == 0:
+                self.combo = 0
+            self.score = v
+            if v > self.best_score:
+                self.best_score = v
+            tag = ""
         self.policy.update(info["feat"], info["action"], reward)
         self.jumps_in_episode += 1
         self.episode_reward += reward
         dx = info["res"].board[0] - info["res"].piece[0]
         signed = (after.piece[0] - ax0 - block["x"]) * (1.0 if dx > 0 else -1.0)
-        self.logline("第%02d跳 目标%.0fpx 横向偏差%.0fpx(%+.0f) 奖励%.3f 平均%.3f %s"
+        self.logline("第%02d跳 目标%.0fpx 横向偏差%.0fpx(%+.0f) 奖励%.3f 平均%.3f %s 分数%d%s"
                      % (self.jumps_in_episode, info["d"], err, signed, reward,
-                        float(np.mean(self.policy.rewards[-20:])), after.method))
+                        float(np.mean(self.policy.rewards[-20:])), after.method,
+                        self.score, tag))
         emit({"t": "res", "kind": "ok", "reward": reward, "err": err,
               "det": det_of(after, False, reward=reward, err=err),
               "stats": self.base_stats()})

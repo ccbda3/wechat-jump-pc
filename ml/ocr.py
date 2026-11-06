@@ -1,7 +1,13 @@
 import asyncio
+import os
 
 import cv2
 import numpy as np
+
+TPL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                        "score_templates.npz")
+TPL_SHAPE = (34, 26)
+TPL_TARGET_H = 32
 
 KEYWORDS = [
     "再玩一局", "再来一局", "再玩一次", "再一次", "重新开始", "重新挑战",
@@ -13,11 +19,109 @@ LIST_WORDS = ["好友排行榜", "查看群排行", "我的排名", "查看全�
               "每周一凌晨刷新", "本周最高分", "精彩回放"]
 
 
+def merge_boxes(mask, min_h=30, max_h=90):
+    n, labels, stats, cents = cv2.connectedComponentsWithStats(mask, 8)
+    raw = []
+    for i in range(1, n):
+        x, y, bw, bh, area = [int(v) for v in stats[i]]
+        if area < 40 or bh < 12:
+            continue
+        raw.append([x, y, bw, bh])
+    merged = True
+    while merged:
+        merged = False
+        for i in range(len(raw)):
+            for j in range(i + 1, len(raw)):
+                a, b = raw[i], raw[j]
+                ax2, ay2 = a[0] + a[2], a[1] + a[3]
+                bx2, by2 = b[0] + b[2], b[1] + b[3]
+                dx = max(0, max(a[0], b[0]) - min(ax2, bx2))
+                dy = max(0, max(a[1], b[1]) - min(ay2, by2))
+                if dx <= 5 and dy <= 5:
+                    raw[i] = [min(a[0], b[0]), min(a[1], b[1]),
+                              max(ax2, bx2) - min(a[0], b[0]),
+                              max(ay2, by2) - min(a[1], b[1])]
+                    raw.pop(j)
+                    merged = True
+                    break
+            if merged:
+                break
+    raw.sort(key=lambda b: b[0])
+    return [b for b in raw if min_h <= b[3] <= max_h]
+
+
+def normalize_glyph(gray, box):
+    x, y, bw, bh = box
+    g = gray[y:y + bh, x:x + bw]
+    g = cv2.resize(g, (max(1, round(bw * TPL_TARGET_H / max(1, bh))), TPL_TARGET_H),
+                   interpolation=cv2.INTER_AREA)
+    canvas = np.full(TPL_SHAPE, 255, np.uint8)
+    hh, ww = g.shape
+    if ww > TPL_SHAPE[1]:
+        g = g[:, :TPL_SHAPE[1]]
+        hh, ww = g.shape
+    ox = (TPL_SHAPE[1] - ww) // 2
+    oy = (TPL_SHAPE[0] - hh) // 2
+    canvas[oy:oy + hh, ox:ox + ww] = g
+    return (canvas < 150).astype(np.float32)
+
+
 class OcrReader:
+    _tpl = None
+
     def __init__(self):
         self._engine = None
         self._loop = None
         self._ready = None
+
+    def templates(self):
+        if OcrReader._tpl is not None:
+            return OcrReader._tpl
+        try:
+            data = np.load(TPL_PATH)
+            OcrReader._tpl = {int(k[1:]): data[k] for k in data.files}
+        except Exception:
+            OcrReader._tpl = {}
+        return OcrReader._tpl
+
+    def score(self, frame):
+        sub, _ = game_crop(frame)
+        return self.score_crop(sub)
+
+    def score_crop(self, sub):
+        tpl = self.templates()
+        if not tpl:
+            return None
+        h, w = sub.shape[:2]
+        roi = sub[int(h * 0.10):int(h * 0.27), int(w * 0.02):int(w * 0.36)]
+        if roi.size == 0:
+            return None
+        gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+        mask = (gray < 150).astype(np.uint8)
+        boxes = merge_boxes(mask)
+        if not boxes:
+            return None
+        digits = ""
+        for box in boxes:
+            g = normalize_glyph(gray, box)
+            scores = {}
+            for d, arrs in tpl.items():
+                for t in arrs:
+                    inter = float(np.minimum(g, t).sum())
+                    union = float(np.maximum(g, t).sum())
+                    iou = inter / union if union > 0 else 0.0
+                    if iou > scores.get(d, 0.0):
+                        scores[d] = iou
+            if not scores:
+                return None
+            best = max(scores.items(), key=lambda kv: kv[1])
+            second = max([v for k, v in scores.items() if k != best[0]] or [0.0])
+            if best[1] < 0.62 or (best[1] - second) < 0.02:
+                return None
+            digits += str(best[0])
+        if not digits:
+            return None
+        return int(digits)
 
     def _init(self):
         if self._ready is not None:

@@ -758,13 +758,30 @@ static void do_button(int id) {
 static DWORD WINAPI preview_main(LPVOID param) {
     (void)param;
     FrameBuf fb = {0};
+    LARGE_INTEGER freq, t0, t1, g0, g1;
+    QueryPerformanceFrequency(&freq);
+    QueryPerformanceCounter(&t0);
+    int frames = 0;
+    double grab_sum = 0.0;
     while (!g_prev_stop) {
         HWND t = g_target;
         if (g_running && t && IsWindow(t)) {
+            QueryPerformanceCounter(&g0);
             if (grab_frame(t, &fb)) publish_frame(&fb);
-            Sleep(90);
+            QueryPerformanceCounter(&g1);
+            grab_sum += (double)(g1.QuadPart - g0.QuadPart) * 1000.0 / (double)freq.QuadPart;
+            frames++;
+            QueryPerformanceCounter(&t1);
+            double el = (double)(t1.QuadPart - t0.QuadPart) / (double)freq.QuadPart;
+            if (el >= 10.0 && frames > 0) {
+                log_line(L"预览 %.0f 帧/秒，抓图平均 %.1fms", frames / el, grab_sum / frames);
+                frames = 0;
+                grab_sum = 0.0;
+                t0 = t1;
+            }
+            Sleep(4);
         } else {
-            Sleep(180);
+            Sleep(120);
         }
     }
     free(fb.data);
@@ -876,6 +893,14 @@ static LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         }
         return 0;
     case APP_FRAME:
+        if (g_main) {
+            HDC fdc = GetDC(g_main);
+            if (fdc) {
+                draw_preview(fdc, &g_layout);
+                ReleaseDC(g_main, fdc);
+            }
+        }
+        return 0;
     case APP_STATS:
         InvalidateRect(hwnd, NULL, FALSE);
         return 0;
