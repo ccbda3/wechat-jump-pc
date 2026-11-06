@@ -11,8 +11,8 @@ ACTIONS = 11
 SCALES = np.array([0.80 + 0.04 * i for i in range(ACTIONS)])
 MIN_PRESS_MS = 140.0
 MAX_PRESS_MS = 1150.0
-MS_PER_PX = 2.16
-MS_REF_W = 655.0
+MS_PER_PX = 2.14
+MS_REF_W = 670.0
 FREEZE_POLICY = True
 
 
@@ -44,6 +44,7 @@ class Policy:
         self.last_reward = 0.0
         self.last_entropy = math.log(ACTIONS)
         self.last_scale = 1.0
+        self.ms_per_px = float(MS_PER_PX)
         self.updated_at = None
         if path:
             self._load()
@@ -133,6 +134,7 @@ class Policy:
                 "rewards": self.rewards[-80:],
                 "action_hist": self.action_hist,
                 "lr": self.lr,
+                "ms_per_px": self.ms_per_px,
                 "updated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
             }
             tmp = self.path + ".tmp"
@@ -164,6 +166,7 @@ class Policy:
             if isinstance(hist, list) and len(hist) == ACTIONS:
                 self.action_hist = [int(v) for v in hist]
             self.lr = float(data.get("lr", self.lr))
+            self.ms_per_px = float(data.get("ms_per_px", self.ms_per_px))
             self.updated_at = data.get("updated_at")
         except Exception:
             pass

@@ -163,6 +163,27 @@ def find_top_spot(bgr, bbox):
     return (best[1], best[2])
 
 
+def face_center_y(bgr, bbox, ref):
+    x, y, bw, bh = [int(v) for v in bbox]
+    h, w = bgr.shape[:2]
+    y1 = min(h, y + bh)
+    roi = bgr[y:y1, x:x + bw]
+    if roi.size == 0:
+        return float(y) + bh * 0.30
+    diff = np.abs(roi.astype(np.int16) - ref).sum(axis=2) > 45
+    rows = []
+    for r in range(diff.shape[0]):
+        xs = np.nonzero(diff[r])[0]
+        rows.append(int(xs.max() - xs.min() + 1) if xs.size else 0)
+    wmax = max(rows) if rows else 0
+    if wmax <= 0:
+        return float(y) + bh * 0.30
+    for i, wd in enumerate(rows):
+        if wd >= int(0.90 * wmax):
+            return float(y + i)
+    return float(y) + bh * 0.30
+
+
 def detect_board(bgr, piece, cfg=None):
     """直接检测台面轮廓并取其顶面中心，返回 (x, y, 置信度, bbox) 或 None。"""
     cfg = cfg or VisionConfig.load()

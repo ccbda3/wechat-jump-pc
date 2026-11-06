@@ -324,7 +324,7 @@ class Runner:
             emit({"t": "res", "kind": "wait", "det": det_of(res, False),
                   "stats": self.base_stats()})
             return
-        base_unit = MS_PER_PX * (w / MS_REF_W) * d
+        base_unit = self.policy.ms_per_px * (MS_REF_W / w) * d
         feat = features(res, w, h, base_unit, self.policy.last_reward, x0)
         action, scale, ent = self.policy.act(feat, greedy)
         ms = min(max(base_unit * base_coef * scale, MIN_PRESS_MS), MAX_PRESS_MS)
@@ -414,6 +414,15 @@ class Runner:
         self.episode_reward += reward
         dx = info["res"].board[0] - info["res"].piece[0]
         signed = (after.piece[0] - ax0 - block["x"]) * (1.0 if dx > 0 else -1.0)
+        wc = sub_after.shape[1]
+        if (abs(signed) >= 8.0 and 100.0 <= info["d"] <= 520.0
+                and 0.12 * wc <= block["width"] <= 0.55 * wc):
+            ratio = info["d"] / max(60.0, info["d"] + signed)
+            old = self.policy.ms_per_px
+            k = old * (1.0 + 0.08 * (ratio - 1.0))
+            self.policy.ms_per_px = max(1.85, min(2.60, k))
+            if abs(self.policy.ms_per_px - old) >= 0.004:
+                self.logline("按压系数自适应 %.3f -> %.3f" % (old, self.policy.ms_per_px))
         self.logline("第%02d跳 目标%.0fpx 横向偏差%.0fpx(%+.0f) 奖励%.3f 平均%.3f %s 分数%d%s 纹理%s"
                      % (self.jumps_in_episode, info["d"], err, signed, reward,
                         float(np.mean(self.policy.rewards[-20:])), after.method,

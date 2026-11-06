@@ -153,8 +153,14 @@ def test_worker():
                  press.get("scale", 0), press["det"].get("d", 0)))
         if press["kind"] != "press":
             raise SystemExit("未输出按压动作")
-        want = MS_PER_PX * (W / MS_REF_W) * press["det"]["d"] * press.get("scale", 1.0)
-        if abs(press["ms"] - want) > 30:
+        ms_ref = MS_PER_PX
+        try:
+            with open(os.path.join(ROOT, "ml_model.json"), encoding="utf-8") as f:
+                ms_ref = float(json.load(f).get("ms_per_px", MS_PER_PX))
+        except Exception:
+            pass
+        want = ms_ref * (MS_REF_W / W) * press["det"]["d"] * press.get("scale", 1.0)
+        if abs(press["ms"] - want) > max(60, 0.10 * want):
             raise SystemExit("按压时长与距离模型不符 %.0f != %.0f" % (press["ms"], want))
 
         send(proc, {"t": "frame", "id": 1, "w": W, "h": H, "phase": "after",

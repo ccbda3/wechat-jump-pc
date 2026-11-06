@@ -1,7 +1,8 @@
 import math
 import os
 
-from ai_vision import FrameResult, find_top_spot
+from ai_vision import FrameResult, face_center_y, find_top_spot
+from ocr import bg_color
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MODEL_PATH = os.path.join(ROOT, "models", "yolo_jump.pt")
@@ -70,8 +71,9 @@ class YoloVision:
         if spot:
             tx, ty = spot
         else:
+            ref = bg_color(bgr)
             tx = (p[1] + p[3]) / 2.0
-            ty = p[2] + 0.30 * (p[4] - p[2])
+            ty = face_center_y(bgr, (p[1], p[2], p[3] - p[1], p[4] - p[2]), ref)
         d = math.hypot(tx - px, ty - py)
         return FrameResult(piece=(px, py), board=(tx, ty), distance=d,
                            confidence=min(piece[0], p[0]), method="yolo",
