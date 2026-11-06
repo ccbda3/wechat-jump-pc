@@ -16,10 +16,13 @@ from ai_vision import VisionConfig, analyze, detect_game_over
 from policy import MAX_PRESS_MS, MIN_PRESS_MS, MS_PER_PX, MS_REF_W, Policy
 from ocr import OcrReader, game_crop
 from landing import landing_reward
+from special import block_texture
 from yolo_vision import YoloVision
 
 MODEL_PATH = os.path.join(ROOT, "ml_model.json")
 LOG_DIR = os.path.join(ROOT, "logs")
+SPECIAL_TEX = 0.10
+LINGER_S = 1.3
 _YOLO = None
 
 
@@ -392,6 +395,10 @@ class Runner:
                   "stats": self.base_stats()})
             return
         v, dbx = self.ocr.score_crop(sub_after)
+        tex = block_texture(sub_after, block, (after.piece[0] - ax0, after.piece[1]))
+        if tex is not None and tex >= SPECIAL_TEX:
+            self.logline("特殊方块 纹理%.3f，停留 %.1fs 等加分" % (tex, LINGER_S))
+            time.sleep(LINGER_S)
         if v is None:
             gain = self.add_score(err)
             tag = "（估算+%d）" % gain
@@ -407,10 +414,11 @@ class Runner:
         self.episode_reward += reward
         dx = info["res"].board[0] - info["res"].piece[0]
         signed = (after.piece[0] - ax0 - block["x"]) * (1.0 if dx > 0 else -1.0)
-        self.logline("第%02d跳 目标%.0fpx 横向偏差%.0fpx(%+.0f) 奖励%.3f 平均%.3f %s 分数%d%s"
+        self.logline("第%02d跳 目标%.0fpx 横向偏差%.0fpx(%+.0f) 奖励%.3f 平均%.3f %s 分数%d%s 纹理%s"
                      % (self.jumps_in_episode, info["d"], err, signed, reward,
                         float(np.mean(self.policy.rewards[-20:])), after.method,
-                        self.score, tag))
+                        self.score, tag,
+                        "--" if tex is None else "%.3f" % tex))
         emit({"t": "res", "kind": "ok", "reward": reward, "err": err,
               "det": det_of(after, False, reward=reward, err=err,
                             digits=[(b[0] + ax0, b[1], b[2], b[3]) for b in dbx]),
