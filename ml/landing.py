@@ -27,10 +27,6 @@ def block_under(bgr, piece):
         x0, x1 = int(seg[0]), int(seg[-1])
         if x1 - x0 < max(55, w * 0.14):
             continue
-        d = np.abs(row - ref).sum(axis=1)
-        strong = np.where(d[x0:x1 + 1] > max(55.0, 0.55 * float(d[x0:x1 + 1].max())))[0]
-        if len(strong) > 0:
-            x0, x1 = x0 + int(strong[0]), x0 + int(strong[-1])
         top = y
         for yy in range(y - 1, max(0, y - 90), -1):
             row2 = bgr[yy].astype(np.int16)
