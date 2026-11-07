@@ -21,9 +21,34 @@ from yolo_vision import YoloVision
 
 MODEL_PATH = os.path.join(ROOT, "ml_model.json")
 LOG_DIR = os.path.join(ROOT, "logs")
+BAD_DIR = os.path.join(LOG_DIR, "bad")
 SPECIAL_TEX = 0.10
 LINGER_S = 1.3
+BAD_LIMIT = 400
 _YOLO = None
+
+
+def save_bad(frame, piece, block, err, tag):
+    try:
+        os.makedirs(BAD_DIR, exist_ok=True)
+        if len(os.listdir(BAD_DIR)) > BAD_LIMIT:
+            return
+        img = frame.copy()
+        if piece is not None:
+            cv2.circle(img, (int(piece[0]), int(piece[1])), 9, (0, 0, 255), 2)
+        if block is not None:
+            x0, x1 = int(block["left"]), int(block["right"])
+            ty = int(block["top"])
+            cv2.line(img, (x0, ty), (x1, ty), (0, 255, 0), 2)
+            cv2.line(img, (int(block["x"]), ty - 12), (int(block["x"]), ty + 12), (0, 255, 255), 2)
+            cv2.line(img, (x0, ty), (x0, int(block["bottom"])), (0, 255, 0), 1)
+            cv2.line(img, (x1, ty), (x1, int(block["bottom"])), (0, 255, 0), 1)
+        cv2.putText(img, "%s err=%d" % (tag, int(err)), (12, 32),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 0, 255), 2)
+        cv2.imwrite(os.path.join(
+            BAD_DIR, "%s_%s_%d.png" % (time.strftime("%Y%m%d_%H%M%S"), tag, int(err))), img)
+    except Exception:
+        pass
 
 
 def yolo_view(sub):
@@ -355,6 +380,7 @@ class Runner:
         after, sub_after, ax0 = analyze_view(self.cfg, frame)
         over = bool(after.game_over) or detect_game_over(sub_after)
         if over or after.piece is None:
+            save_bad(sub_after, None, None, 0, "over")
             self.policy.update(info["feat"], info["action"], 0.0)
             self.logline("跳跃失败：奖励 0.00")
             self.close_episode()
@@ -387,6 +413,7 @@ class Runner:
                   "det": det_of(after, False), "stats": self.base_stats()})
             return
         if err > block["width"] * 0.45:
+            save_bad(sub_after, (after.piece[0] - ax0, after.piece[1]), block, err, "out")
             self.policy.update(info["feat"], info["action"], 0.0)
             self.logline("跳出方块：奖励 0.00")
             self.close_episode()
@@ -419,6 +446,8 @@ class Runner:
                         float(np.mean(self.policy.rewards[-20:])), after.method,
                         self.score, tag,
                         "--" if tex is None else "%.3f" % tex))
+        if err > 60:
+            save_bad(sub_after, (after.piece[0] - ax0, after.piece[1]), block, err, "big")
         emit({"t": "res", "kind": "ok", "reward": reward, "err": err,
               "det": det_of(after, False, reward=reward, err=err,
                             digits=[(b[0] + ax0, b[1], b[2], b[3]) for b in dbx]),
