@@ -13,7 +13,7 @@ import cv2
 import numpy as np
 
 from ai_vision import VisionConfig, analyze, detect_game_over
-from policy import MAX_PRESS_MS, MIN_PRESS_MS, MS_PER_PX, MS_REF_W, Policy
+from policy import MAX_PRESS_MS, MIN_PRESS_MS, MS_PER_PX, Policy
 from ocr import OcrReader, game_crop
 from landing import landing_reward
 from special import block_texture
@@ -25,6 +25,7 @@ BAD_DIR = os.path.join(LOG_DIR, "bad")
 SPECIAL_TEX = 0.10
 LINGER_S = 1.3
 BAD_LIMIT = 400
+RESTART_WORDS = ("再玩", "再来", "重新", "继续游戏")
 _YOLO = None
 
 
@@ -266,20 +267,22 @@ class Runner:
 
     def handle_before(self, req, frame, base_coef, greedy):
         res, sub, x0 = analyze_view(self.cfg, frame)
-        over = bool(res.game_over) or detect_game_over(sub)
+        over_hint = bool(res.game_over) or detect_game_over(sub)
         w = frame.shape[1] - x0
         h = frame.shape[0]
         now = time.time()
         valid_game = (res.piece is not None and res.board is not None
                       and res.method != "game_over" and res.confidence >= 0.65)
-        want_ocr = (not valid_game) and (over or self.need_start
+        want_ocr = (not valid_game) and (over_hint or self.need_start
                     or res.piece is None or res.board is None
                     or (now - self.last_ocr) >= 1.0)
+        over = False
         loc = None
         if want_ocr:
             self.last_ocr = now
-            loc = self.ocr.locate(
-                frame, allow_shape=(over or res.piece is None or self.need_start))
+            loc = self.ocr.locate(sub, allow_shape=True)
+            if loc and loc.get("x") is not None:
+                loc["x"] = float(loc["x"]) + x0
             kind = loc.get("kind") if loc else None
             if kind == "list":
                 if loc["x"] is None:
@@ -298,7 +301,8 @@ class Runner:
                       "stats": self.base_stats()})
                 self.need_start = True
                 return
-            if kind == "start":
+            if kind == "start" and (self.need_start or any(
+                    w in loc["text"] for w in RESTART_WORDS)):
                 if now - self.last_click < 1.4:
                     emit({"t": "res", "kind": "wait", "det": det_of(res, False),
                           "stats": self.base_stats()})
@@ -349,7 +353,7 @@ class Runner:
             emit({"t": "res", "kind": "wait", "det": det_of(res, False),
                   "stats": self.base_stats()})
             return
-        base_unit = MS_PER_PX * (MS_REF_W / w) * d
+        base_unit = MS_PER_PX * d
         feat = features(res, w, h, base_unit, self.policy.last_reward, x0)
         action, scale, ent = self.policy.act(feat, greedy)
         ms = min(max(base_unit * base_coef * scale, MIN_PRESS_MS), MAX_PRESS_MS)
@@ -378,15 +382,21 @@ class Runner:
             emit({"t": "res", "kind": "wait", "stats": self.base_stats()})
             return
         after, sub_after, ax0 = analyze_view(self.cfg, frame)
-        over = bool(after.game_over) or detect_game_over(sub_after)
-        if over or after.piece is None:
+        over = False
+        loc = None
+        if (after.piece is None or after.method == "game_over"
+                or detect_game_over(sub_after)):
+            loc = self.ocr.locate(sub_after, allow_shape=True)
+            if loc and loc.get("x") is not None:
+                loc["x"] = float(loc["x"]) + ax0
+            over = bool(loc and loc.get("source") == "ocr"
+                        and any(w in loc.get("text", "") for w in RESTART_WORDS))
+        if over:
             save_bad(sub_after, None, None, 0, "over")
             self.policy.update(info["feat"], info["action"], 0.0)
             self.logline("跳跃失败：奖励 0.00")
             self.close_episode()
-            loc = self.ocr.locate(frame, allow_shape=True)
-            can_click = (loc and loc.get("x") is not None
-                         and (loc["source"] == "ocr" or loc.get("over")))
+            can_click = loc and loc.get("x") is not None
             if can_click:
                 self.need_start = False
                 self.logline("检测到%s，自动点击 (%.0f, %.0f) 重新开始"
@@ -399,6 +409,11 @@ class Runner:
                 emit({"t": "res", "kind": "ok", "reward": 0.0,
                       "det": det_of(after, True, reward=0.0),
                       "stats": self.base_stats()})
+            return
+        if after.piece is None:
+            self.logline("落点画面没识别到棋子，本跳不学习")
+            emit({"t": "res", "kind": "ok", "reward": None,
+                  "det": det_of(after, False), "stats": self.base_stats()})
             return
         settled = int(req.get("settled", 1))
         if not settled:

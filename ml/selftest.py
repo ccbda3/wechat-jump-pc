@@ -11,7 +11,7 @@ import numpy as np
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
-from ml.policy import ACTIONS, FEATURES, HIDDEN, MS_PER_PX, MS_REF_W, Policy, SCALES
+from ml.policy import ACTIONS, FEATURES, HIDDEN, MS_PER_PX, Policy, SCALES
 from ai_vision import VisionConfig, analyze
 
 W, H = 600, 900
@@ -153,7 +153,7 @@ def test_worker():
                  press.get("scale", 0), press["det"].get("d", 0)))
         if press["kind"] != "press":
             raise SystemExit("未输出按压动作")
-        want = MS_PER_PX * (MS_REF_W / W) * press["det"]["d"] * press.get("scale", 1.0)
+        want = MS_PER_PX * press["det"]["d"] * press.get("scale", 1.0)
         if abs(press["ms"] - want) > max(60, 0.10 * want):
             raise SystemExit("按压时长与距离模型不符 %.0f != %.0f" % (press["ms"], want))
 
