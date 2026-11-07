@@ -160,6 +160,7 @@ class Runner:
         self.last_click = 0.0
         self.score = 0
         self.best_score = 0
+        self.score_before = None
         self.combo = 0
         self.center_px = 8.0
         self.episode_open = False
@@ -363,6 +364,7 @@ class Runner:
         }
         self.episode_open = True
         self.need_start = False
+        self.score_before = self.ocr.score_crop(sub)[0]
         self.logline("第%02d跳 距离%.0fpx 动作%d 系数%.2f 按压%.0fms 熵%.2f %s%s"
                      % (self.jumps_in_episode + 1, d, action, scale, ms, ent,
                         res.method, self.box_text(res)))
@@ -420,24 +422,32 @@ class Runner:
             emit({"t": "res", "kind": "ok", "reward": None,
                   "det": det_of(after, False), "stats": self.base_stats()})
             return
+        v, dbx = self.ocr.score_crop(sub_after)
+        gained = None
+        if v is not None and self.score_before is not None:
+            diff = v - self.score_before
+            if 0 <= diff <= 12:
+                gained = diff
         reward, err, block = landing_reward(
             sub_after, (after.piece[0] - ax0, after.piece[1]))
+        if self.jumps_in_episode == 0:
+            self.combo = 0
+        center = bool(gained is not None and gained >= 2)
+        if center:
+            err = 0.0
+            reward = 1.0
+            self.combo += 1
+        elif gained is not None:
+            self.combo = 0
         if reward is None:
             self.logline("没有找到落点方砖，本跳不学习")
             emit({"t": "res", "kind": "ok", "reward": None,
                   "det": det_of(after, False), "stats": self.base_stats()})
             return
-        if err > block["width"] * 0.45:
-            save_bad(sub_after, (after.piece[0] - ax0, after.piece[1]), block, err, "out")
-            self.policy.update(info["feat"], info["action"], 0.0)
-            self.logline("跳出方块：奖励 0.00")
-            self.close_episode()
-            emit({"t": "res", "kind": "ok", "reward": 0.0, "err": err,
-                  "det": det_of(after, True, reward=0.0, err=err),
-                  "stats": self.base_stats()})
-            return
-        v, dbx = self.ocr.score_crop(sub_after)
-        tex = block_texture(sub_after, block, (after.piece[0] - ax0, after.piece[1]))
+        tex = None
+        if block is not None:
+            tex = block_texture(sub_after, block,
+                                (after.piece[0] - ax0, after.piece[1]))
         if tex is not None and tex >= SPECIAL_TEX:
             self.logline("特殊方块 纹理%.3f，停留 %.1fs 等加分" % (tex, LINGER_S))
             time.sleep(LINGER_S)
@@ -445,17 +455,21 @@ class Runner:
             gain = self.add_score(err)
             tag = "（估算+%d）" % gain
         else:
-            if self.jumps_in_episode == 0:
-                self.combo = 0
             self.score = v
             if v > self.best_score:
                 self.best_score = v
-            tag = ""
+            if gained is None:
+                tag = ""
+            elif gained >= 2:
+                tag = "（分数+%d 中心）" % gained
+            else:
+                tag = "（分数+%d）" % gained
         self.policy.update(info["feat"], info["action"], reward)
         self.jumps_in_episode += 1
         self.episode_reward += reward
         dx = info["res"].board[0] - info["res"].piece[0]
-        signed = (after.piece[0] - ax0 - block["x"]) * (1.0 if dx > 0 else -1.0)
+        bx = block["x"] if block is not None else float(after.piece[0] - ax0)
+        signed = 0.0 if center else (after.piece[0] - ax0 - bx) * (1.0 if dx > 0 else -1.0)
         self.logline("第%02d跳 目标%.0fpx 横向偏差%.0fpx(%+.0f) 奖励%.3f 平均%.3f %s 分数%d%s 纹理%s"
                      % (self.jumps_in_episode, info["d"], err, signed, reward,
                         float(np.mean(self.policy.rewards[-20:])), after.method,
