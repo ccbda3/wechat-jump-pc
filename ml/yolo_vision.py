@@ -60,6 +60,8 @@ class YoloVision:
         for p in plats:
             if p[2] >= py - 4.0:
                 continue
+            if p[1] + 6 <= px <= p[3] - 6 and p[4] > py + 4:
+                continue
             cx = (p[1] + p[3]) / 2.0
             dist = math.hypot(cx - px, p[2] - py)
             if best is None or dist < best[0]:

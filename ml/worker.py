@@ -379,7 +379,7 @@ class Runner:
             emit({"t": "res", "kind": "wait", "det": det_of(res, False),
                   "stats": self.base_stats()})
             return
-        if res.method != "legacy" and res.confidence < (0.45 if force else 0.65):
+        if res.method != "legacy" and res.confidence < (0.30 if force else 0.65):
             self.note_wait("识别置信度过低 %.2f" % res.confidence, res)
             emit({"t": "res", "kind": "wait", "det": det_of(res, False),
                   "stats": self.base_stats()})
