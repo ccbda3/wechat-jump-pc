@@ -346,6 +346,7 @@ class Runner:
                           "stats": self.base_stats()})
                     return
                 self.last_click = now
+                self.close_episode()
                 self.need_start = False
                 self.logline("检测到汉字「%s」，自动点击 (%.0f, %.0f)"
                              % (loc["text"], loc["x"], loc["y"]))
