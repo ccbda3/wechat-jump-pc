@@ -16,14 +16,13 @@ from ai_vision import VisionConfig, analyze, detect_game_over
 from policy import MAX_PRESS_MS, MIN_PRESS_MS, MS_PER_PX, Policy
 from ocr import OcrReader, game_crop
 from landing import landing_reward
-from special import block_texture
+from special import block_texture, special_block
 from yolo_vision import YoloVision
 
 MODEL_PATH = os.path.join(ROOT, "ml_model.json")
 LOG_DIR = os.path.join(ROOT, "logs")
 BAD_DIR = os.path.join(LOG_DIR, "bad")
-SPECIAL_TEX = 0.10
-LINGER_S = 1.3
+LINGER_S = 2.0
 BAD_LIMIT = 400
 RESTART_WORDS = ("再玩", "再来", "重新", "继续游戏")
 _YOLO = None
@@ -515,11 +514,14 @@ class Runner:
                   "det": det_of(after, False), "stats": self.base_stats()})
             return
         tex = None
+        kind = None
         if block is not None:
             tex = block_texture(sub_after, block,
                                 (after.piece[0] - ax0, after.piece[1]))
-        if tex is not None and tex >= SPECIAL_TEX:
-            self.logline("特殊方块 纹理%.3f，停留 %.1fs 等加分" % (tex, LINGER_S))
+            kind = special_block(sub_after, block,
+                                 (after.piece[0] - ax0, after.piece[1]))
+        if kind is not None:
+            self.logline("特殊方块 %s，停留 %.1fs 拿加分" % (kind, LINGER_S))
             time.sleep(LINGER_S)
         if v is None:
             gain = self.add_score(err)
