@@ -283,6 +283,7 @@ class Runner:
         elif sig is not None:
             self.same_count = 0
             self.last_sig = sig
+        force = self.same_count >= 3
         if self.same_count >= 6:
             loc = self.ocr.locate(sub, allow_shape=True)
             if loc and loc.get("x") is not None:
@@ -303,11 +304,10 @@ class Runner:
                       "text": loc["text"], "det": det_of(res, False, text=loc["text"]),
                       "stats": self.base_stats()})
                 return
-            self.note_wait("画面连续 %d 次无变化，暂停按压等待游戏窗口恢复"
+            self.note_wait("画面连续 %d 次无变化，降低置信度要求后继续尝试"
                            % self.same_count, res)
-            emit({"t": "res", "kind": "wait", "det": det_of(res, False),
-                  "stats": self.base_stats()})
-            return
+            self.same_count = 0
+            self.last_sig = None
         valid_game = (res.piece is not None and res.board is not None
                       and res.method != "game_over" and res.confidence >= 0.65)
         want_ocr = (not valid_game) and (over_hint or self.need_start
@@ -379,14 +379,14 @@ class Runner:
             emit({"t": "res", "kind": "wait", "det": det_of(res, False),
                   "stats": self.base_stats()})
             return
-        if res.method != "legacy" and res.confidence < 0.65:
+        if res.method != "legacy" and res.confidence < (0.45 if force else 0.65):
             self.note_wait("识别置信度过低 %.2f" % res.confidence, res)
             emit({"t": "res", "kind": "wait", "det": det_of(res, False),
                   "stats": self.base_stats()})
             return
         diag = math.hypot(w, h)
         d = float(res.distance)
-        if d < 25 or d > 0.75 * diag:
+        if (d < 25 and not force) or d > 0.75 * diag:
             self.note_wait("距离异常 %.0fpx" % d, res)
             emit({"t": "res", "kind": "wait", "det": det_of(res, False),
                   "stats": self.base_stats()})
