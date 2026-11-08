@@ -474,7 +474,7 @@ class Runner:
         gained = None
         if v is not None and self.score_before is not None:
             diff = v - self.score_before
-            if 0 <= diff <= 12:
+            if 0 <= diff <= 60:
                 gained = diff
         reward, err, block = landing_reward(
             sub_after, (after.piece[0] - ax0, after.piece[1]))
