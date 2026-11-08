@@ -8,10 +8,10 @@ import numpy as np
 FEATURES = 10
 HIDDEN = 24
 ACTIONS = 11
-SCALES = np.array([0.80 + 0.04 * i for i in range(ACTIONS)])
+SCALES = np.array([0.90 + 0.02 * i for i in range(ACTIONS)])
 MIN_PRESS_MS = 140.0
 MAX_PRESS_MS = 1150.0
-MS_PER_PX = 2.10
+MS_PER_PX = 2.03
 FREEZE_POLICY = False
 
 

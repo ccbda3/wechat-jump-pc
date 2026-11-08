@@ -481,7 +481,29 @@ class Runner:
         if self.jumps_in_episode == 0:
             self.combo = 0
         center = bool(gained is not None and gained >= 2)
+        if not center and err is not None and err > 40:
+            ploc = self.ocr.locate(sub_after, allow_shape=True)
+            if ploc and ploc.get("x") is not None:
+                ploc["x"] = float(ploc["x"]) + ax0
+            text = ploc.get("text", "") if ploc else ""
+            if text and (any(w in text for w in RESTART_WORDS) or "排行" in text):
+                save_bad(sub_after, None, None, 0, "page")
+                self.policy.update(info["feat"], info["action"], 0.0)
+                self.logline("落点画面是「%s」，判定本局已结束，奖励 0.00" % text)
+                self.close_episode()
+                if ploc.get("x") is not None:
+                    self.need_start = False
+                    emit({"t": "res", "kind": "restart", "x": ploc["x"], "y": ploc["y"],
+                          "text": text,
+                          "det": det_of(after, True, reward=0.0, text=text),
+                          "stats": self.base_stats()})
+                else:
+                    emit({"t": "res", "kind": "ok", "reward": 0.0,
+                          "det": det_of(after, True, reward=0.0),
+                          "stats": self.base_stats()})
+                return
         if center:
+            err_raw = err
             err = 0.0
             reward = 1.0
             self.combo += 1
@@ -518,10 +540,13 @@ class Runner:
         dx = info["res"].board[0] - info["res"].piece[0]
         bx = block["x"] if block is not None else float(after.piece[0] - ax0)
         signed = 0.0 if center else (after.piece[0] - ax0 - bx) * (1.0 if dx > 0 else -1.0)
-        self.logline("第%02d跳 目标%.0fpx 横向偏差%.0fpx(%+.0f) 奖励%.3f 平均%.3f %s 分数%d%s 纹理%s"
+        extra = ""
+        if center:
+            extra = " 实测%s" % ("--" if err_raw is None else "%.0fpx" % err_raw)
+        self.logline("第%02d跳 目标%.0fpx 横向偏差%.0fpx(%+.0f) 奖励%.3f 平均%.3f %s 分数%d%s%s 纹理%s"
                      % (self.jumps_in_episode, info["d"], err, signed, reward,
                         float(np.mean(self.policy.rewards[-20:])), after.method,
-                        self.score, tag,
+                        self.score, tag, extra,
                         "--" if tex is None else "%.3f" % tex))
         if err > 60:
             save_bad(sub_after, (after.piece[0] - ax0, after.piece[1]), block, err, "big")
