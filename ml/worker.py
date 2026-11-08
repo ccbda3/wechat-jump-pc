@@ -164,6 +164,8 @@ class Runner:
         self.combo = 0
         self.center_px = 8.0
         self.episode_open = False
+        self.last_sig = None
+        self.same_count = 0
         self._init_log()
 
     def note_wait(self, reason, res=None, frame=None):
@@ -272,6 +274,41 @@ class Runner:
         w = frame.shape[1] - x0
         h = frame.shape[0]
         now = time.time()
+        sig = None
+        if res.piece is not None and res.board is not None:
+            sig = (round(float(res.distance)),
+                   round(float(res.piece[0]), 1), round(float(res.piece[1]), 1),
+                   round(float(res.board[0]), 1), round(float(res.board[1]), 1))
+        if sig is not None and sig == self.last_sig:
+            self.same_count += 1
+        elif sig is not None:
+            self.same_count = 0
+            self.last_sig = sig
+        if self.same_count >= 6:
+            loc = self.ocr.locate(sub, allow_shape=True)
+            if loc and loc.get("x") is not None:
+                loc["x"] = float(loc["x"]) + x0
+            kind = loc.get("kind") if loc else None
+            if kind in ("list", "start", "over") and now - self.last_click >= 1.4:
+                self.last_click = now
+                count = self.same_count
+                self.same_count = 0
+                self.last_sig = None
+                if kind != "list":
+                    self.close_episode()
+                else:
+                    self.need_start = True
+                self.logline("画面连续 %d 次无变化，识别到%s，点击 (%.0f, %.0f)"
+                             % (count, self.tag_of(loc), loc["x"], loc["y"]))
+                emit({"t": "res", "kind": "restart", "x": loc["x"], "y": loc["y"],
+                      "text": loc["text"], "det": det_of(res, False, text=loc["text"]),
+                      "stats": self.base_stats()})
+                return
+            self.note_wait("画面连续 %d 次无变化，暂停按压等待游戏窗口恢复"
+                           % self.same_count, res)
+            emit({"t": "res", "kind": "wait", "det": det_of(res, False),
+                  "stats": self.base_stats()})
+            return
         valid_game = (res.piece is not None and res.board is not None
                       and res.method != "game_over" and res.confidence >= 0.65)
         want_ocr = (not valid_game) and (over_hint or self.need_start
@@ -361,6 +398,7 @@ class Runner:
         self.pending[self.pending_key(req)] = {
             "frame": frame, "res": res, "feat": feat, "action": action,
             "scale": scale, "ms": ms, "d": d, "base_unit": base_unit,
+            "sig": sig,
         }
         self.episode_open = True
         self.need_start = False
@@ -384,6 +422,15 @@ class Runner:
             emit({"t": "res", "kind": "wait", "stats": self.base_stats()})
             return
         after, sub_after, ax0 = analyze_view(self.cfg, frame)
+        if after.piece is not None and after.board is not None and info.get("sig"):
+            same = (round(float(after.distance)),
+                    round(float(after.piece[0]), 1), round(float(after.piece[1]), 1),
+                    round(float(after.board[0]), 1), round(float(after.board[1]), 1))
+            if same == info["sig"]:
+                self.logline("落点画面与起跳画面相同，判定画面未刷新，本跳不学习")
+                emit({"t": "res", "kind": "ok", "reward": None,
+                      "det": det_of(after, False), "stats": self.base_stats()})
+                return
         over = False
         loc = None
         if (after.piece is None or after.method == "game_over"
