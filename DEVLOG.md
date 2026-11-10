@@ -6,7 +6,7 @@
 
 ## 项目速览
 
-- 路径：`C:\Users\Whaoy\Documents\wechat-jump-pc`
+- 路径：仓库根目录（Windows 11）
 - 架构：C 写界面与 Win32（抓图/按压/窗口枚举），Python 写视觉、OCR 与策略网络，管道只传 JSON 协议行，画面走文件
 - 环境：项目内 `.venv`，Python 3.13.7 + Pillow + numpy + opencv-python + mss + winrt OCR 包
 - 启动：`native\build\jump_rl.exe`（或 `run.bat`）
