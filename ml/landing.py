@@ -2,6 +2,35 @@ import cv2
 import numpy as np
 
 
+def project_center(before, after, piece_xy, box):
+    if before is None or after is None or box is None:
+        return None
+    h, w = before.shape[:2]
+    px, py = int(piece_xy[0]), int(piece_xy[1])
+    rx = 72
+    x0 = max(0, px - rx)
+    x1 = min(w, px + rx)
+    y0 = max(0, py + 8)
+    y1 = min(h, py + 8 + 76)
+    if x1 - x0 < 60 or y1 - y0 < 30:
+        return None
+    tpl = cv2.cvtColor(before[y0:y1, x0:x1], cv2.COLOR_BGR2GRAY)
+    tgt = cv2.cvtColor(after, cv2.COLOR_BGR2GRAY)
+    if tgt.shape[0] < tpl.shape[0] or tgt.shape[1] < tpl.shape[1]:
+        return None
+    res = cv2.matchTemplate(tgt, tpl, cv2.TM_CCOEFF_NORMED)
+    _, score, _, loc = cv2.minMaxLoc(res)
+    if score < 0.45:
+        return None
+    dx = loc[0] - x0
+    if abs(dx) > 420:
+        return None
+    exp = px - (box[0] + box[2] / 2.0)
+    if abs(dx - exp) > 0.5 * abs(exp) + 70:
+        return None
+    return float(box[0] + box[2] / 2.0) + dx
+
+
 def block_under(bgr, piece):
     h, w = bgr.shape[:2]
     px, py = int(piece[0]), int(piece[1])

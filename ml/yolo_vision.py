@@ -58,11 +58,16 @@ class YoloVision:
         py = piece[4] - 2.0
         best = None
         for p in plats:
-            if p[2] >= py - 4.0:
+            bw = p[3] - p[1]
+            bh = p[4] - p[2]
+            if bw < 55:
                 continue
-            if p[1] + 6 <= px <= p[3] - 6 and p[4] > py + 4:
+            face_y = p[2] + bh * 0.30
+            if abs(face_y - py) < 45.0:
                 continue
             cx = (p[1] + p[3]) / 2.0
+            if p[1] + 6 <= px <= p[3] - 6 and p[4] > py + 4:
+                continue
             dist = math.hypot(cx - px, p[2] - py)
             if best is None or dist < best[0]:
                 best = (dist, p)

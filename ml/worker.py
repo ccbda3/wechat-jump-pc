@@ -15,7 +15,7 @@ import numpy as np
 from ai_vision import VisionConfig, analyze, detect_game_over
 from policy import MAX_PRESS_MS, MIN_PRESS_MS, MS_PER_PX, Policy
 from ocr import OcrReader, game_crop
-from landing import landing_reward
+from landing import landing_reward, project_center
 from special import block_texture, special_block
 from yolo_vision import YoloVision
 
@@ -165,6 +165,8 @@ class Runner:
         self.episode_open = False
         self.last_sig = None
         self.same_count = 0
+        self.last_land = 0.0
+        self.retry = 0
         self._init_log()
 
     def note_wait(self, reason, res=None, frame=None):
@@ -392,6 +394,9 @@ class Runner:
                   "stats": self.base_stats()})
             return
         base_unit = MS_PER_PX * d
+        gap = time.time() - self.last_land
+        if 0 < gap < 0.35:
+            time.sleep(0.35 - gap)
         feat = features(res, w, h, base_unit, self.policy.last_reward, x0)
         action, scale, ent = self.policy.act(feat, greedy)
         ms = min(max(base_unit * base_coef * scale, MIN_PRESS_MS), MAX_PRESS_MS)
@@ -406,6 +411,8 @@ class Runner:
         self.logline("第%02d跳 距离%.0fpx 动作%d 系数%.2f 按压%.0fms 熵%.2f %s%s"
                      % (self.jumps_in_episode + 1, d, action, scale, ms, ent,
                         res.method, self.box_text(res)))
+        if d < 130:
+            save_bad(sub, res.piece, None, d, "near")
         emit({"t": "res", "kind": "press", "ms": ms, "action": action,
               "scale": scale, "entropy": ent,
               "x": float(x0) + w * 0.5, "y": float(h) * 0.68,
@@ -427,6 +434,14 @@ class Runner:
                     round(float(after.piece[0]), 1), round(float(after.piece[1]), 1),
                     round(float(after.board[0]), 1), round(float(after.board[1]), 1))
             if same == info["sig"]:
+                if self.retry < 2:
+                    self.retry += 1
+                    self.last_land = time.time()
+                    self.logline("画面与起跳前完全相同，按压被吞，重试本跳 %d/2" % self.retry)
+                    emit({"t": "res", "kind": "wait", "det": det_of(after, False),
+                          "stats": self.base_stats()})
+                    return
+                self.retry = 0
                 self.logline("落点画面与起跳画面相同，判定画面未刷新，本跳不学习")
                 emit({"t": "res", "kind": "ok", "reward": None,
                       "det": det_of(after, False), "stats": self.base_stats()})
@@ -477,6 +492,14 @@ class Runner:
                 gained = diff
         reward, err, block = landing_reward(
             sub_after, (after.piece[0] - ax0, after.piece[1]))
+        proj = project_center(info["frame"], frame,
+                             (info["res"].piece[0], info["res"].piece[1]),
+                             info["res"].box)
+        if proj is not None:
+            err = abs(float(after.piece[0]) - proj)
+            bw = float(info["res"].box[2]) if info["res"].box else 0.0
+            scale = max(16.0, bw * 0.24)
+            reward = float(np.exp(-(err / scale) ** 2))
         if self.jumps_in_episode == 0:
             self.combo = 0
         center = bool(gained is not None and gained >= 2)
@@ -506,8 +529,13 @@ class Runner:
             err = 0.0
             reward = 1.0
             self.combo += 1
+        elif gained == 0:
+            reward = 0.0
+            self.combo = 0
         elif gained is not None:
             self.combo = 0
+        self.retry = 0
+        self.last_land = time.time()
         if reward is None:
             self.logline("没有找到落点方砖，本跳不学习")
             emit({"t": "res", "kind": "ok", "reward": None,
@@ -540,11 +568,18 @@ class Runner:
         self.jumps_in_episode += 1
         self.episode_reward += reward
         dx = info["res"].board[0] - info["res"].piece[0]
-        bx = block["x"] if block is not None else float(after.piece[0] - ax0)
-        signed = 0.0 if center else (after.piece[0] - ax0 - bx) * (1.0 if dx > 0 else -1.0)
+        if proj is not None:
+            bx = proj
+        elif block is not None:
+            bx = block["x"] + ax0
+        else:
+            bx = float(after.piece[0])
+        signed = 0.0 if center else (after.piece[0] - bx) * (1.0 if dx > 0 else -1.0)
         extra = ""
         if center:
             extra = " 实测%s" % ("--" if err_raw is None else "%.0fpx" % err_raw)
+        elif proj is not None:
+            extra = " 投影"
         self.logline("第%02d跳 目标%.0fpx 横向偏差%.0fpx(%+.0f) 奖励%.3f 平均%.3f %s 分数%d%s%s 纹理%s"
                      % (self.jumps_in_episode, info["d"], err, signed, reward,
                         float(np.mean(self.policy.rewards[-20:])), after.method,
