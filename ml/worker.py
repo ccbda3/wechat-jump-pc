@@ -392,6 +392,11 @@ class Runner:
                 return
             tx = float(req.get("tx", 0))
             ty = float(req.get("ty", 0))
+            if tx < x0 + 6:
+                self.note_wait("手动模式：点击在游戏区域外，请点下一个小方砖", res)
+                emit({"t": "res", "kind": "wait", "det": det_of(res, False),
+                      "stats": self.base_stats()})
+                return
             d = math.hypot(tx - res.piece[0], ty - res.piece[1])
             diag = math.hypot(frame.shape[1], frame.shape[0])
             if d < 20 or d > 0.9 * diag:
@@ -412,7 +417,7 @@ class Runner:
                          % (tx, ty, d, ms))
             emit({"t": "res", "kind": "press", "ms": ms, "action": -1,
                   "scale": 1.0, "entropy": 0.0,
-                  "x": float(x0) + w * 0.5, "y": float(h) * 0.68,
+                  "x": tx, "y": ty,
                   "det": det_of(res, False),
                   "stats": self.base_stats()})
             return

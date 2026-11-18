@@ -512,16 +512,15 @@ static int save_frame(FrameBuf* fb, const char* phase) {
 }
 
 static int request_frame(FrameBuf* fb, const char* phase, int id,
-                         double base, int greedy, int settled, Res* r) {
+                         double base, int greedy, int settled, Res* r,
+                         int manual, int has_tap, int tx, int ty) {
     char hdr[512];
-    int manual = g_manual ? 1 : 0;
-    int got = (manual && g_manual_got) ? 1 : 0;
     snprintf(hdr, sizeof(hdr),
              "{\"t\":\"frame\",\"id\":%d,\"w\":%d,\"h\":%d,\"phase\":\"%s\","
              "\"base\":%.3f,\"greedy\":%d,\"settled\":%d,"
              "\"manual\":%d,\"has_tap\":%d,\"tx\":%d,\"ty\":%d}\n",
              id, fb->w, fb->h, phase, base, greedy, settled,
-             manual, got, got ? (int)g_manual_x : 0, got ? (int)g_manual_y : 0);
+             manual, has_tap, tx, ty);
     if (!save_frame(fb, phase)) {
         log_line(L"画面写入文件失败");
         return 0;
@@ -619,17 +618,33 @@ static DWORD WINAPI worker_main(LPVOID param) {
             continue;
         }
         publish_frame(&before);
-        if (g_manual && !g_manual_got) {
-            InterlockedExchange(&g_manual_armed, 1);
+        int manual = g_manual ? 1 : 0;
+        int has_tap = 0, tx = 0, ty = 0;
+        if (manual && InterlockedExchangeAdd(&g_manual_got, 0)) {
+            has_tap = 1;
+            tx = (int)g_manual_x;
+            ty = (int)g_manual_y;
         }
         DWORD t_send = GetTickCount();
-        if (!request_frame(&before, "before", id, g_base_coef, g_greedy, 1, &res)) {
+        if (!request_frame(&before, "before", id, g_base_coef, g_greedy, 1,
+                           &res, manual, has_tap, tx, ty)) {
             log_line(L"推理进程无响应，引擎停止");
             break;
         }
         DWORD cost = GetTickCount() - t_send;
         if (cost > 2500) log_line(L"推理耗时 %.1f 秒（帧 %dx%d）", cost / 1000.0, before.w, before.h);
         apply_stats(&res.st);
+        if (manual && strcmp(res.kind, "wait") == 0) {
+            if (has_tap) {
+                InterlockedExchange(&g_manual_got, 0);
+            } else if (InterlockedExchangeAdd(&g_manual_preview, 0)
+                       && res.det.has_board) {
+                POINT cpt = {0, 0};
+                ClientToScreen(hwnd, &cpt);
+                SetCursorPos(cpt.x + (int)res.det.bx, cpt.y + (int)res.det.by);
+                InterlockedExchange(&g_manual_preview, 0);
+            }
+        }
         if (strcmp(res.kind, "press") == 0 && res.has_ms) {
             int sx = 0, sy = 0;
             POINT cpt = {0, 0};
@@ -640,16 +655,17 @@ static DWORD WINAPI worker_main(LPVOID param) {
             } else {
                 random_point(hwnd, &sx, &sy);
             }
+            InterlockedExchange(&g_manual_busy, 1);
             press_hold(sx, sy, res.ms);
             InterlockedExchange(&g_manual_got, 0);
-            InterlockedExchange(&g_manual_armed, 0);
             int stable = wait_stable(hwnd, &prev, &cur, 3.2);
             if (!grab_frame(hwnd, &after)) {
                 g_running = 0;
                 break;
             }
             publish_frame(&after);
-            if (!request_frame(&after, "after", id, g_base_coef, g_greedy, stable, &res)) {
+            if (!request_frame(&after, "after", id, g_base_coef, g_greedy,
+                               stable, &res, manual, 0, 0, 0)) {
                 log_line(L"推理进程无响应，引擎停止");
                 break;
             }
@@ -666,6 +682,8 @@ static DWORD WINAPI worker_main(LPVOID param) {
                 log_line(L"已点击 (%.0f, %.0f) 继续", res.x, res.y);
                 Sleep(1500);
             }
+            InterlockedExchange(&g_manual_busy, 0);
+            if (manual) InterlockedExchange(&g_manual_preview, 1);
         } else if (strcmp(res.kind, "restart") == 0 && res.has_x && res.has_y) {
             POINT pt = {0, 0};
             ClientToScreen(hwnd, &pt);
@@ -675,6 +693,7 @@ static DWORD WINAPI worker_main(LPVOID param) {
             click_at(cx, cy);
             log_line(L"已点击 (%.0f, %.0f)", res.x, res.y);
             Sleep(1500);
+            if (manual) InterlockedExchange(&g_manual_preview, 1);
         } else {
             apply_det(&res.det, 0.0, 0);
             Sleep(380);

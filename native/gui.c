@@ -26,7 +26,8 @@ volatile LONG g_state = ST_STOPPED;
 double g_base_coef = 1.0;
 int g_greedy = 0;
 int g_manual = 0;
-volatile LONG g_manual_armed = 0;
+volatile LONG g_manual_busy = 0;
+volatile LONG g_manual_preview = 0;
 volatile LONG g_manual_got = 0;
 volatile LONG g_manual_x = 0;
 volatile LONG g_manual_y = 0;
@@ -921,7 +922,8 @@ static LRESULT CALLBACK hotkey_proc(int code, WPARAM wp, LPARAM lp) {
 
 static LRESULT CALLBACK mouse_proc(int code, WPARAM wp, LPARAM lp) {
     if (code < 0) return CallNextHookEx(g_mhook, code, wp, lp);
-    if (!g_manual_armed) return CallNextHookEx(g_mhook, code, wp, lp);
+    if (!g_manual || !g_running || g_paused)
+        return CallNextHookEx(g_mhook, code, wp, lp);
     MSLLHOOKSTRUCT* m = (MSLLHOOKSTRUCT*)lp;
     if (m->flags & LLMHF_INJECTED) return CallNextHookEx(g_mhook, code, wp, lp);
     if (wp == WM_LBUTTONDOWN) {
@@ -932,10 +934,11 @@ static LRESULT CALLBACK mouse_proc(int code, WPARAM wp, LPARAM lp) {
             RECT rc;
             GetClientRect(t, &rc);
             if (pt.x >= 0 && pt.y >= 0 && pt.x < rc.right && pt.y < rc.bottom) {
-                InterlockedExchange(&g_manual_x, pt.x);
-                InterlockedExchange(&g_manual_y, pt.y);
-                InterlockedExchange(&g_manual_got, 1);
-                InterlockedExchange(&g_manual_armed, 0);
+                if (!g_manual_busy) {
+                    InterlockedExchange(&g_manual_x, pt.x);
+                    InterlockedExchange(&g_manual_y, pt.y);
+                    InterlockedExchange(&g_manual_got, 1);
+                }
                 InterlockedExchange(&g_manual_swallow_up, 1);
                 return 1;
             }
@@ -988,8 +991,8 @@ static LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         }
         if (PtInRect(&g_layout.chk2, p)) {
             g_manual = !g_manual;
-            InterlockedExchange(&g_manual_armed, 0);
             InterlockedExchange(&g_manual_got, 0);
+            InterlockedExchange(&g_manual_preview, g_manual ? 1 : 0);
             log_line(g_manual ? L"已切换到手动模式：点一下下一个方块，程序自己跳"
                               : L"已切换回自动模式");
             InvalidateRect(hwnd, NULL, FALSE);

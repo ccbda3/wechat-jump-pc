@@ -195,6 +195,9 @@ def test_worker():
         want_tap = MS_PER_PX * math.hypot(490 - 120, 444 - 560)
         if abs(tap["ms"] - want_tap) > max(60, 0.10 * want_tap):
             raise SystemExit("手动模式按压时长不符 %.0f != %.0f" % (tap["ms"], want_tap))
+        if abs(tap.get("x", -1) - 490) > 2 or abs(tap.get("y", -1) - 444) > 2:
+            raise SystemExit("手动模式按压点未落在点击位置 (%s, %s)"
+                             % (tap.get("x"), tap.get("y")))
 
         print("协议联调通过，首跳按压=%.0fms" % base_unit)
     finally:
