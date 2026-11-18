@@ -51,6 +51,7 @@ typedef struct {
     RECT slider;
     RECT coef_range;
     RECT chk;
+    RECT chk2;
     RECT btn_start;
     RECT btn_stop;
     RECT btn_pause;
@@ -86,6 +87,11 @@ extern volatile LONG g_state;
 
 extern double g_base_coef;
 extern int g_greedy;
+extern int g_manual;
+extern volatile LONG g_manual_armed;
+extern volatile LONG g_manual_got;
+extern volatile LONG g_manual_x;
+extern volatile LONG g_manual_y;
 extern HWND g_target;
 extern wchar_t g_target_title[256];
 extern int g_btn_hover;

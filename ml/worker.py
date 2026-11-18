@@ -310,10 +310,13 @@ class Runner:
                            % self.same_count, res)
             self.same_count = 0
             self.last_sig = None
-        valid_game = (res.piece is not None and res.board is not None
+        manual = bool(int(req.get("manual", 0)))
+        valid_game = (res.piece is not None
+                      and (manual or res.board is not None)
                       and res.method != "game_over" and res.confidence >= 0.65)
         want_ocr = (not valid_game) and (over_hint or self.need_start
-                    or res.piece is None or res.board is None
+                    or res.piece is None
+                    or (res.board is None and not manual)
                     or (now - self.last_ocr) >= 1.0)
         over = False
         loc = None
@@ -374,6 +377,43 @@ class Runner:
                 return
             self.note_wait("结算页等待按钮", res)
             emit({"t": "res", "kind": "wait", "det": det_of(res, True),
+                  "stats": self.base_stats()})
+            return
+        if manual:
+            if res.piece is None:
+                self.note_wait("手动模式：没识别到棋子", res)
+                emit({"t": "res", "kind": "wait", "det": det_of(res, False),
+                      "stats": self.base_stats()})
+                return
+            if not int(req.get("has_tap", 0)):
+                self.note_wait("手动模式：请在游戏画面上点一下下一个方块", res)
+                emit({"t": "res", "kind": "wait", "det": det_of(res, False),
+                      "stats": self.base_stats()})
+                return
+            tx = float(req.get("tx", 0))
+            ty = float(req.get("ty", 0))
+            d = math.hypot(tx - res.piece[0], ty - res.piece[1])
+            diag = math.hypot(frame.shape[1], frame.shape[0])
+            if d < 20 or d > 0.9 * diag:
+                self.note_wait("手动模式：点击位置距离异常 %.0fpx" % d, res)
+                emit({"t": "res", "kind": "wait", "det": det_of(res, False),
+                      "stats": self.base_stats()})
+                return
+            ms = min(max(MS_PER_PX * d * base_coef, MIN_PRESS_MS), MAX_PRESS_MS)
+            self.pending[self.pending_key(req)] = {
+                "frame": frame, "res": res, "feat": None, "action": -1,
+                "scale": 1.0, "ms": ms, "d": d, "base_unit": MS_PER_PX * d,
+                "sig": sig, "manual": True,
+            }
+            self.episode_open = True
+            self.need_start = False
+            self.score_before = self.ocr.score_crop(sub)[0]
+            self.logline("手动目标 (%.0f,%.0f) 距离 %.0fpx 按压 %.0fms"
+                         % (tx, ty, d, ms))
+            emit({"t": "res", "kind": "press", "ms": ms, "action": -1,
+                  "scale": 1.0, "entropy": 0.0,
+                  "x": float(x0) + w * 0.5, "y": float(h) * 0.68,
+                  "det": det_of(res, False),
                   "stats": self.base_stats()})
             return
         if res.piece is None or res.board is None:
@@ -457,7 +497,8 @@ class Runner:
                         and any(w in loc.get("text", "") for w in RESTART_WORDS))
         if over:
             save_bad(sub_after, None, None, 0, "over")
-            self.policy.update(info["feat"], info["action"], 0.0)
+            if info.get("feat") is not None:
+                self.policy.update(info["feat"], info["action"], 0.0)
             self.logline("跳跃失败：奖励 0.00")
             self.close_episode()
             can_click = loc and loc.get("x") is not None
@@ -510,7 +551,8 @@ class Runner:
             text = ploc.get("text", "") if ploc else ""
             if text and (any(w in text for w in RESTART_WORDS) or "排行" in text):
                 save_bad(sub_after, None, None, 0, "page")
-                self.policy.update(info["feat"], info["action"], 0.0)
+                if info.get("feat") is not None:
+                    self.policy.update(info["feat"], info["action"], 0.0)
                 self.logline("落点画面是「%s」，判定本局已结束，奖励 0.00" % text)
                 self.close_episode()
                 if ploc.get("x") is not None:
@@ -564,10 +606,14 @@ class Runner:
                 tag = "（分数+%d 中心）" % gained
             else:
                 tag = "（分数+%d）" % gained
-        self.policy.update(info["feat"], info["action"], reward)
+        if info.get("feat") is not None:
+            self.policy.update(info["feat"], info["action"], reward)
         self.jumps_in_episode += 1
         self.episode_reward += reward
-        dx = info["res"].board[0] - info["res"].piece[0]
+        if info["res"].board is not None:
+            dx = info["res"].board[0] - info["res"].piece[0]
+        else:
+            dx = float(after.piece[0]) - info["res"].piece[0]
         if proj is not None:
             bx = proj
         elif block is not None:

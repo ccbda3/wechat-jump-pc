@@ -175,6 +175,27 @@ def test_worker():
                  over.get("y", -1)))
         if over["kind"] != "restart":
             raise SystemExit("结算页未触发自动重开")
+        send(proc, {"t": "frame", "id": 3, "w": W, "h": H, "phase": "before",
+                    "base": 1.0, "greedy": 0, "settled": 1,
+                    "manual": 1, "has_tap": 0}, make_frame())
+        wait = read(proc)
+        print("手动等待：kind=%s" % wait["kind"])
+        if wait["kind"] != "wait":
+            raise SystemExit("手动模式无点击时不应按压")
+
+        send(proc, {"t": "frame", "id": 4, "w": W, "h": H, "phase": "before",
+                    "base": 1.0, "greedy": 0, "settled": 1,
+                    "manual": 1, "has_tap": 1, "tx": 490, "ty": 444},
+             make_frame())
+        tap = read(proc)
+        print("手动跳跃：kind=%s ms=%.0f 距离=%.0f"
+              % (tap["kind"], tap.get("ms", 0), tap["det"].get("d", 0)))
+        if tap["kind"] != "press":
+            raise SystemExit("手动模式点击后未按压")
+        want_tap = MS_PER_PX * math.hypot(490 - 120, 444 - 560)
+        if abs(tap["ms"] - want_tap) > max(60, 0.10 * want_tap):
+            raise SystemExit("手动模式按压时长不符 %.0f != %.0f" % (tap["ms"], want_tap))
+
         print("协议联调通过，首跳按压=%.0fms" % base_unit)
     finally:
         try:

@@ -514,10 +514,14 @@ static int save_frame(FrameBuf* fb, const char* phase) {
 static int request_frame(FrameBuf* fb, const char* phase, int id,
                          double base, int greedy, int settled, Res* r) {
     char hdr[512];
+    int manual = g_manual ? 1 : 0;
+    int got = (manual && g_manual_got) ? 1 : 0;
     snprintf(hdr, sizeof(hdr),
              "{\"t\":\"frame\",\"id\":%d,\"w\":%d,\"h\":%d,\"phase\":\"%s\","
-             "\"base\":%.3f,\"greedy\":%d,\"settled\":%d}\n",
-             id, fb->w, fb->h, phase, base, greedy, settled);
+             "\"base\":%.3f,\"greedy\":%d,\"settled\":%d,"
+             "\"manual\":%d,\"has_tap\":%d,\"tx\":%d,\"ty\":%d}\n",
+             id, fb->w, fb->h, phase, base, greedy, settled,
+             manual, got, got ? (int)g_manual_x : 0, got ? (int)g_manual_y : 0);
     if (!save_frame(fb, phase)) {
         log_line(L"画面写入文件失败");
         return 0;
@@ -615,6 +619,9 @@ static DWORD WINAPI worker_main(LPVOID param) {
             continue;
         }
         publish_frame(&before);
+        if (g_manual && !g_manual_got) {
+            InterlockedExchange(&g_manual_armed, 1);
+        }
         DWORD t_send = GetTickCount();
         if (!request_frame(&before, "before", id, g_base_coef, g_greedy, 1, &res)) {
             log_line(L"推理进程无响应，引擎停止");
@@ -634,6 +641,8 @@ static DWORD WINAPI worker_main(LPVOID param) {
                 random_point(hwnd, &sx, &sy);
             }
             press_hold(sx, sy, res.ms);
+            InterlockedExchange(&g_manual_got, 0);
+            InterlockedExchange(&g_manual_armed, 0);
             int stable = wait_stable(hwnd, &prev, &cur, 3.2);
             if (!grab_frame(hwnd, &after)) {
                 g_running = 0;

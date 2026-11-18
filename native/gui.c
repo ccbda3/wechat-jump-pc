@@ -25,6 +25,13 @@ volatile LONG g_state = ST_STOPPED;
 
 double g_base_coef = 1.0;
 int g_greedy = 0;
+int g_manual = 0;
+volatile LONG g_manual_armed = 0;
+volatile LONG g_manual_got = 0;
+volatile LONG g_manual_x = 0;
+volatile LONG g_manual_y = 0;
+static volatile LONG g_manual_swallow_up = 0;
+static HHOOK g_mhook = NULL;
 static HHOOK g_hook = NULL;
 static HANDLE g_prev_thread = NULL;
 static volatile LONG g_prev_stop = 0;
@@ -306,8 +313,13 @@ static void do_layout(RECT* c, Layout* L) {
     L->chk.right = ix + iw;
     L->chk.bottom = L->chk.top + S(24);
 
+    L->chk2.left = ix;
+    L->chk2.top = L->chk.bottom + S(8);
+    L->chk2.right = ix + iw;
+    L->chk2.bottom = L->chk2.top + S(24);
+
     L->btn_start.left = ix;
-    L->btn_start.top = L->chk.bottom + S(18);
+    L->btn_start.top = L->chk2.bottom + S(18);
     L->btn_start.right = ix + iw;
     L->btn_start.bottom = L->btn_start.top + S(46);
 
@@ -667,6 +679,24 @@ static void paint(HWND hwnd) {
     draw_text(mem, cl, L"贪心模式（不再随机探索）", g_f_body, C_FG,
               DT_LEFT | DT_VCENTER | DT_SINGLELINE);
 
+    RECT cb2;
+    cb2.left = g_layout.chk2.left;
+    cb2.top = g_layout.chk2.top + S(3);
+    cb2.right = cb2.left + S(18);
+    cb2.bottom = cb2.top + S(18);
+    round_box(mem, cb2, g_manual ? C_ACCENT : C_CARD2, C_STROKE, S(5));
+    if (g_manual) {
+        draw_text(mem, cb2, L"✓", g_f_body, RGB(255, 255, 255),
+                  DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    }
+    RECT cl2;
+    cl2.left = cb2.right + S(8);
+    cl2.top = g_layout.chk2.top;
+    cl2.right = g_layout.chk2.right;
+    cl2.bottom = g_layout.chk2.bottom;
+    draw_text(mem, cl2, L"手动模式（我点目标，程序自己跳）", g_f_body, C_FG,
+              DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+
     int running = (g_running != 0);
     draw_button(mem, g_layout.btn_start, running ? L"▶  正在运行" : L"▶  开始训练",
                 C_GREEN, C_GREEN_H, RGB(255, 255, 255),
@@ -889,6 +919,34 @@ static LRESULT CALLBACK hotkey_proc(int code, WPARAM wp, LPARAM lp) {
     return CallNextHookEx(g_hook, code, wp, lp);
 }
 
+static LRESULT CALLBACK mouse_proc(int code, WPARAM wp, LPARAM lp) {
+    if (code < 0) return CallNextHookEx(g_mhook, code, wp, lp);
+    if (!g_manual_armed) return CallNextHookEx(g_mhook, code, wp, lp);
+    MSLLHOOKSTRUCT* m = (MSLLHOOKSTRUCT*)lp;
+    if (m->flags & LLMHF_INJECTED) return CallNextHookEx(g_mhook, code, wp, lp);
+    if (wp == WM_LBUTTONDOWN) {
+        HWND t = g_target;
+        if (t && IsWindow(t)) {
+            POINT pt = m->pt;
+            ScreenToClient(t, &pt);
+            RECT rc;
+            GetClientRect(t, &rc);
+            if (pt.x >= 0 && pt.y >= 0 && pt.x < rc.right && pt.y < rc.bottom) {
+                InterlockedExchange(&g_manual_x, pt.x);
+                InterlockedExchange(&g_manual_y, pt.y);
+                InterlockedExchange(&g_manual_got, 1);
+                InterlockedExchange(&g_manual_armed, 0);
+                InterlockedExchange(&g_manual_swallow_up, 1);
+                return 1;
+            }
+        }
+    } else if (wp == WM_LBUTTONUP && g_manual_swallow_up) {
+        InterlockedExchange(&g_manual_swallow_up, 0);
+        return 1;
+    }
+    return CallNextHookEx(g_mhook, code, wp, lp);
+}
+
 static LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     switch (msg) {
     case WM_CREATE:
@@ -925,6 +983,15 @@ static LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         }
         if (PtInRect(&g_layout.chk, p)) {
             g_greedy = !g_greedy;
+            InvalidateRect(hwnd, NULL, FALSE);
+            return 0;
+        }
+        if (PtInRect(&g_layout.chk2, p)) {
+            g_manual = !g_manual;
+            InterlockedExchange(&g_manual_armed, 0);
+            InterlockedExchange(&g_manual_got, 0);
+            log_line(g_manual ? L"已切换到手动模式：点一下下一个方块，程序自己跳"
+                              : L"已切换回自动模式");
             InvalidateRect(hwnd, NULL, FALSE);
             return 0;
         }
@@ -998,6 +1065,10 @@ static LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             UnhookWindowsHookEx(g_hook);
             g_hook = NULL;
         }
+        if (g_mhook) {
+            UnhookWindowsHookEx(g_mhook);
+            g_mhook = NULL;
+        }
         PostQuitMessage(0);
         return 0;
     }
@@ -1051,6 +1122,8 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show) {
     g_hook = SetWindowsHookExW(WH_KEYBOARD_LL, hotkey_proc,
                                GetModuleHandleW(NULL), 0);
     g_prev_thread = CreateThread(NULL, 0, preview_main, NULL, 0, NULL);
+    g_mhook = SetWindowsHookExW(WH_MOUSE_LL, mouse_proc,
+                                GetModuleHandleW(NULL), 0);
     log_line(g_hook ? L"全局快捷键已启用：游戏窗口在前台时按空格暂停/继续"
                     : L"全局快捷键注册失败，仅本窗口在前台时按空格生效");
 
