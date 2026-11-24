@@ -7,21 +7,23 @@
 ## 项目速览
 
 - 路径：仓库根目录（Windows 11）
-- 架构：PySide6 写界面与引擎线程，`win_backend.py` 用 ctypes 直接做抓图/按压/全局钩子，Python 写视觉、OCR 与策略网络，worker 输出经回调队列进界面
-- 环境：项目内 `.venv`，Python 3.13.7 + Pillow + numpy + opencv-python + mss + winrt OCR 包 + PySide6
-- 启动：`run.bat`（内部为 `.venv\Scripts\pythonw.exe qt_app.py`，不弹控制台）
+- 架构：Win32 API 纯 C 写界面、引擎线程与全局钩子，Python 只做视觉识别与策略推理，C 与 Python 之间走 JSON 协议行 + `logs/frame_*.bin`
+- 环境：项目内 `.venv`，Python 3.13.7 + Pillow + numpy + opencv-python + mss + winrt OCR 包；界面用 MinGW gcc 15.2 编译
+- 启动：`native\build\jump_rl.exe`（或桌面「微信跳一跳训练台」快捷方式），`-mwindows` 无控制台
 - 自测：`.venv\Scripts\python.exe ml\selftest.py`
-- 编译：无，纯 Python，改完重启进程即可
+- 编译：`gcc -O2 -o native\build\jump_rl.exe native\gui.c native\core.c -luser32 -lgdi32 -lwinmm -lm -mwindows`
 
 ## 文件职责
 
 | 文件 | 作用 |
 | --- | --- |
-| `qt_app.py` | PySide6 主界面：窗口列表、统计卡片、奖励曲线、预览、日志、引擎线程与预览线程 |
-| `win_backend.py` | PrintWindow 抓图、精确按压、窗口枚举、鼠标/键盘全局钩子 |
+| `native/app.h` | C 侧共享结构体与全局状态声明 |
+| `native/gui.c` | Win32 经典灰底界面、窗口列表、预览、日志、统计卡、鼠标/键盘全局钩子 |
+| `native/core.c` | PrintWindow 抓图、精确按压、帧文件与 JSON 管道、引擎线程 |
 | `ml/worker.py` | 推理主循环：识别 → 决策 → 反馈 → 学习 → 自动重开 |
 | `ml/yolo_vision.py` | YOLO + 传统 CV 融合，对比上一帧与背景挑出新方块 |
-| `ml/policy.py` | numpy 策略网络（21 动作 REINFORCE + 基线 + 熵正则 + 续训） |
+| `ml/correct.py` | 人工修正样本：梯度模板保存、评分与全图定位 |
+| `ml/policy.py` | numpy 策略网络（11 动作 REINFORCE + 基线 + 熵正则 + 续训） |
 | `ml/landing.py` | 用棋子脚下那块方砖算落点横向偏差，作为奖励依据 |
 | `ml/ocr.py` | Windows 中文 OCR，判定结算页/排行榜/主页并给出点击点 |
 | `ai_vision.py` | 视觉识别，原项目 legacy 算法保留 |
@@ -31,7 +33,7 @@
 1. **C 做界面和输入，Python 做感知与决策**：画面写文件，管道只传协议，避免大块数据堵塞。
 2. **首跳用原物理公式**：策略网络只在基准附近调整，不会冷启动乱按。
 3. **中心即最高奖励**：奖励 = exp(-(横向偏差 / 0.10×方砖宽)²)，掉落为 0。
-4. **非游戏页不跳**：OCR 识别排行榜/福利页点返回；识别置信度低于 0.8 不点击。
+4. **非游戏页不跳**：OCR 识别排行榜/福利页点返回；自动模式识别置信度低于 0.65 时不硬跳，转为人工点选修正。
 5. **窗口校验**：目标窗口标题不含「跳一跳/小程序/微信」时停手，避免点到别的程序。
 6. **点击有冷却**：OCR 触发的点击 1.4 秒内不重复，防止连点。
 
@@ -51,11 +53,19 @@
 - **00:50 中文识别**：接入 Windows 内置 OCR，能识别「再玩一局」「排行榜」「本周最高分」等页面文字。
 - **00:55 安全校验**：探测过程中误点到别的窗口，补上窗口标题校验与识别置信度门槛。
 
+### 2026-11-24
+
+- **界面回到纯 C**：删除 PySide6 的 `qt_app.py` / `win_backend.py`，恢复 `native/gui.c` + `core.c`，按经典 Win32 灰底 3D 凹凸风格重绘，空格全局暂停实测通过。
+- **启动崩溃**：`pythonw.exe` 无控制台时 `sys.stdout` 为 `None`，`ml/worker.py` 导入即 `AttributeError`。把协议输出改为可选，`PROTO is None` 时跳过。
+- **人工修正闭环**：新增 `ml/correct.py`。置信度低于 0.65 或找不到目标时 worker 返回 `ask`，C 侧进入「待修正」并抓取一次游戏窗口点击；这一跳按点击点起跳，并把周围 96×96 梯度模板存入 `ml/vision_calib.npz`。以后 YOLO 选中的目标与样本差得远时改用模板匹配定位。
+- **协议扩展**：帧请求新增 `assist` 字段；`worker.py` 先处理人工修正点击，再走原有置信度门槛。
+- **自测**：新增修正样本评分/定位用例与 `assist` 点击按压用例，全部通过。
+
 ## 当前状态
 
-- `ml/selftest.py` 全部通过（策略收敛、续训、识别、管道联调、OCR 重开）。
-- 真实窗口验证：能连续跳、能算奖励、能识别结算页；排行榜/福利页的返回按钮坐标仍需按实际页面继续标定。
-- 待办：真实结算页的「再玩一局」按钮位置需要实机确认；确认后再把返回/重开坐标固化成配置。
+- `ml/selftest.py` 全部通过（策略收敛、续训、识别、修正样本、管道联调、手动模式、人工修正、OCR 重开）。
+- 实机验证：C 界面可启动、空格开始/暂停生效、模型正常加载（82 局 / 2776 跳）。
+- 待办：低可信度触发阈值 0.65 需在更多近方块/背景场景里观察，必要时调 `ASK_CONF` 或模板阈值。
 
 ## 常见问题
 

@@ -15,4 +15,3 @@ winrt-Windows.Security.Cryptography
 winrt-Windows.Globalization
 winrt-Windows.Foundation
 winrt-Windows.Foundation.Collections
-PySide6

@@ -18,6 +18,7 @@ import cv2
 import numpy as np
 
 from ai_vision import VisionConfig, analyze, detect_game_over
+from correct import Corrector
 from policy import MAX_PRESS_MS, MIN_PRESS_MS, MS_PER_PX, Policy
 from ocr import OcrReader, game_crop
 from landing import landing_reward, project_center
@@ -30,6 +31,7 @@ BAD_DIR = os.path.join(LOG_DIR, "bad")
 LINGER_S = 2.0
 BAD_LIMIT = 400
 RESTART_WORDS = ("再玩", "再来", "重新", "继续游戏")
+ASK_CONF = 0.65
 _YOLO = None
 
 
@@ -181,6 +183,7 @@ class Runner:
         self.last_land = 0.0
         self.retry = 0
         self.prev = None
+        self.calib = Corrector()
         self._init_log()
 
     def note_wait(self, reason, res=None, frame=None):
@@ -247,6 +250,8 @@ class Runner:
         else:
             self.logline("新模型：策略网络 %d 隐层，%d 个动作，奖励以落点离中心距离计算"
                          % (24, 21))
+        if self.calib.count:
+            self.logline("已加载 %d 个修正样本，识别时会优先参考人工点过的目标" % self.calib.count)
         if not self.ocr._init():
             self.logline("警告：系统缺少中文 OCR 语言包，结算页将退回按钮形状识别")
         emit({"t": "res", "kind": "ready", "stats": s})
@@ -326,6 +331,8 @@ class Runner:
             self.same_count = 0
             self.last_sig = None
         manual = bool(int(req.get("manual", 0)))
+        assist = bool(int(req.get("assist", 0)))
+        assist_tap = assist and bool(int(req.get("has_tap", 0)))
         valid_game = (res.piece is not None
                       and (manual or res.board is not None)
                       and res.method != "game_over" and res.confidence >= 0.65)
@@ -436,6 +443,54 @@ class Runner:
                   "x": tx, "y": ty,
                   "det": det_of(res, False),
                   "stats": self.base_stats()})
+            return
+        low = (res.method != "legacy"
+               and res.confidence < (0.30 if force else ASK_CONF))
+        if res.piece is not None and (assist_tap or res.board is None or low):
+            if not assist_tap:
+                if assist:
+                    emit({"t": "res", "kind": "wait", "det": det_of(res, False),
+                          "stats": self.base_stats()})
+                else:
+                    self.note_wait("识别可信度低 %.2f，等待人工点击目标中心"
+                                   % res.confidence, res)
+                    emit({"t": "res", "kind": "ask", "det": det_of(res, False),
+                          "stats": self.base_stats()})
+                return
+            tx = float(req.get("tx", 0))
+            ty = float(req.get("ty", 0))
+            if tx < x0 + 6:
+                emit({"t": "res", "kind": "wait", "det": det_of(res, False),
+                      "stats": self.base_stats()})
+                return
+            d = math.hypot(tx - res.piece[0], ty - res.piece[1])
+            diag = math.hypot(frame.shape[1], frame.shape[0])
+            if d < 20 or d > 0.9 * diag:
+                emit({"t": "res", "kind": "wait", "det": det_of(res, False),
+                      "stats": self.base_stats()})
+                return
+            before = self.calib.count
+            self.calib.add(sub, (tx - x0, ty))
+            res.board = (tx, ty)
+            res.distance = d
+            res.confidence = 1.0
+            res.method = "assist"
+            res.box = None
+            ms = min(max(MS_PER_PX * d * base_coef, MIN_PRESS_MS), MAX_PRESS_MS)
+            self.pending[self.pending_key(req)] = {
+                "frame": frame, "res": res, "feat": None, "action": -1,
+                "scale": 1.0, "ms": ms, "d": d, "base_unit": MS_PER_PX * d,
+                "sig": sig, "manual": True,
+            }
+            self.episode_open = True
+            self.need_start = False
+            self.score_before = self.ocr.score_crop(sub)[0]
+            self.prev = (frame.copy(), tuple(res.piece), tuple(res.board))
+            self.logline("人工修正目标 (%.0f,%.0f) 距离 %.0fpx 按压 %.0fms，修正样本 %d→%d"
+                         % (tx, ty, d, ms, before, self.calib.count))
+            emit({"t": "res", "kind": "press", "ms": ms, "action": -1,
+                  "scale": 1.0, "entropy": 0.0, "x": tx, "y": ty,
+                  "det": det_of(res, False), "stats": self.base_stats()})
             return
         if res.piece is None or res.board is None:
             self.note_wait("识别失败", res)

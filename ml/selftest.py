@@ -134,12 +134,40 @@ def test_vision():
         raise SystemExit("识别距离异常")
 
 
+def test_calib():
+    from ml.correct import Corrector
+    tmp = os.path.join(tempfile.gettempdir(), "jump_calib_selftest.npz")
+    if os.path.exists(tmp):
+        os.remove(tmp)
+    frame = make_frame()
+    cv2.rectangle(frame, (480, 680), (520, 720), (20, 30, 200), -1)
+    cv2.circle(frame, (500, 700), 10, (0, 255, 255), -1)
+    cal = Corrector(path=tmp)
+    n = cal.add(frame, (500, 700))
+    hit = cal.locate(frame)
+    s_hit = cal.score(frame, (500, 700))
+    s_miss = cal.score(frame, (300, 300))
+    print("修正样本：%d 个，命中分 %.3f，偏移分 %.3f，定位 %s"
+          % (n, s_hit, s_miss, None if hit is None else
+             (round(hit[0]), round(hit[1]), round(hit[2], 3))))
+    if n != 1 or s_hit < 0.99 or s_miss > 0.9:
+        raise SystemExit("修正样本模板评分异常")
+    if hit is None or abs(hit[0] - 500) > 2 or abs(hit[1] - 700) > 2:
+        raise SystemExit("修正样本定位失败")
+    os.remove(tmp)
+
+
 def test_worker():
     worker = os.path.join(ROOT, "ml", "worker.py")
     py = os.path.join(ROOT, ".venv", "Scripts", "python.exe")
+    calib = os.path.join(tempfile.gettempdir(), "jump_calib_worker.npz")
+    if os.path.exists(calib):
+        os.remove(calib)
+    env = os.environ.copy()
+    env["JUMP_CALIB_PATH"] = calib
     proc = subprocess.Popen(
         [py, worker], cwd=ROOT, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE, bufsize=0)
+        stderr=subprocess.PIPE, bufsize=0, env=env)
     try:
         send(proc, {"t": "init"})
         init = read(proc, quiet=True)
@@ -199,6 +227,25 @@ def test_worker():
             raise SystemExit("手动模式按压点未落在点击位置 (%s, %s)"
                              % (tap.get("x"), tap.get("y")))
 
+        send(proc, {"t": "frame", "id": 5, "w": W, "h": H, "phase": "before",
+                    "base": 1.0, "greedy": 0, "settled": 1,
+                    "assist": 1, "has_tap": 1, "tx": 490, "ty": 444},
+             make_frame())
+        fix = read(proc)
+        print("人工修正：kind=%s ms=%.0f 距离=%.0f 点=(%.0f, %.0f)"
+              % (fix["kind"], fix.get("ms", 0), fix["det"].get("d", 0),
+                 fix.get("x", -1), fix.get("y", -1)))
+        if fix["kind"] != "press":
+            raise SystemExit("人工修正点击后未按压")
+        want_fix = MS_PER_PX * math.hypot(490 - 120, 444 - 560)
+        if abs(fix["ms"] - want_fix) > max(60, 0.10 * want_fix):
+            raise SystemExit("人工修正按压时长不符 %.0f != %.0f"
+                             % (fix["ms"], want_fix))
+        if abs(fix.get("x", -1) - 490) > 2 or abs(fix.get("y", -1) - 444) > 2:
+            raise SystemExit("人工修正按压点未落在点击位置")
+        if not os.path.exists(calib):
+            raise SystemExit("人工修正未保存样本")
+
         print("协议联调通过，首跳按压=%.0fms" % base_unit)
     finally:
         try:
@@ -209,6 +256,8 @@ def test_worker():
         err = proc.stderr.read()
         if err:
             print("stderr:", err.decode("utf-8", "ignore")[-400:])
+        if os.path.exists(calib):
+            os.remove(calib)
 
 
 def main():
@@ -216,6 +265,8 @@ def main():
     test_policy()
     print("== 视觉识别 ==")
     test_vision()
+    print("== 修正样本 ==")
+    test_calib()
     print("== 管道联调 ==")
     test_worker()
     print("全部自测通过")
