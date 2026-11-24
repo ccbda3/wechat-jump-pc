@@ -7,7 +7,10 @@ import time
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 PROTO = sys.stdout.buffer
-sys.stdout = sys.stderr
+if os.environ.get("JUMP_WORKER_CHILD"):
+    sys.stdout = sys.stderr
+
+EMIT_HOOK = None
 
 import cv2
 import numpy as np
@@ -51,18 +54,21 @@ def save_bad(frame, piece, block, err, tag):
         pass
 
 
-def yolo_view(sub):
+def yolo_view(sub, ref=None):
     global _YOLO
     if _YOLO is None:
         _YOLO = YoloVision()
     try:
-        return _YOLO.analyze(sub)
+        return _YOLO.analyze(sub, ref)
     except Exception:
         return None
 
 
 def emit(obj):
     try:
+        if EMIT_HOOK is not None:
+            EMIT_HOOK(obj)
+            return
         PROTO.write(json.dumps(obj, ensure_ascii=False, separators=(",", ":")).encode("utf-8") + b"\n")
         PROTO.flush()
     except Exception:
@@ -97,9 +103,12 @@ def features(res, w, h, base_unit, prev_reward, x0=0):
     ], dtype=np.float64)
 
 
-def analyze_view(cfg, frame):
+def analyze_view(cfg, frame, ref=None):
     sub, x0 = game_crop(frame)
-    res = yolo_view(sub)
+    ref_sub = None
+    if ref is not None:
+        ref_sub = ((ref[0][0] - x0, ref[0][1]), (ref[1][0] - x0, ref[1][1]))
+    res = yolo_view(sub, ref_sub)
     if res is None:
         res = analyze(sub, cfg, prefer="cv")
     if x0:
@@ -167,6 +176,7 @@ class Runner:
         self.same_count = 0
         self.last_land = 0.0
         self.retry = 0
+        self.prev = None
         self._init_log()
 
     def note_wait(self, reason, res=None, frame=None):
@@ -256,6 +266,7 @@ class Runner:
         self.jumps_in_episode = 0
         self.episode_reward = 0.0
         self.need_start = True
+        self.prev = None
 
     def box_text(self, res):
         if not res or not res.box:
@@ -270,7 +281,7 @@ class Runner:
         return "结算按钮"
 
     def handle_before(self, req, frame, base_coef, greedy):
-        res, sub, x0 = analyze_view(self.cfg, frame)
+        res, sub, x0 = analyze_view(self.cfg, frame, self.prev)
         over_hint = bool(res.game_over) or detect_game_over(sub)
         w = frame.shape[1] - x0
         h = frame.shape[0]
@@ -413,6 +424,7 @@ class Runner:
             self.episode_open = True
             self.need_start = False
             self.score_before = self.ocr.score_crop(sub)[0]
+            self.prev = (frame.copy(), tuple(res.piece), tuple(res.board))
             self.logline("手动目标 (%.0f,%.0f) 距离 %.0fpx 按压 %.0fms"
                          % (tx, ty, d, ms))
             emit({"t": "res", "kind": "press", "ms": ms, "action": -1,
@@ -453,6 +465,7 @@ class Runner:
         self.episode_open = True
         self.need_start = False
         self.score_before = self.ocr.score_crop(sub)[0]
+        self.prev = (frame.copy(), tuple(res.piece), tuple(res.board))
         self.logline("第%02d跳 距离%.0fpx 动作%d 系数%.2f 按压%.0fms 熵%.2f %s%s"
                      % (self.jumps_in_episode + 1, d, action, scale, ms, ent,
                         res.method, self.box_text(res)))

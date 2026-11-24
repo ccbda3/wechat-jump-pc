@@ -42,9 +42,13 @@ py -3.13 -m venv .venv
 
 ## 启动
 
-双击 `run.bat`，或直接运行 `native\build\jump_rl.exe`。
+双击 `run.bat`，或直接运行：
 
-界面不会出现黑色控制台窗口：GUI 是原生 C 程序，Python 推理进程由 `pythonw.exe` 隐藏启动。
+```
+.venv\Scripts\pythonw.exe qt_app.py
+```
+
+界面是 PySide6（Qt）写的 Windows 11 风格深色窗口，用 `pythonw.exe` 启动不会弹黑色控制台。抓图、按压、全局钩子都走 `win_backend.py` 里的 Win32 调用。
 
 ---
 
@@ -113,22 +117,20 @@ py -3.13 -m venv .venv
 
 ```
 wechat-jump-pc/
-├── native/
-│   ├── app.h            # C 端共享声明
-│   ├── core.c           # 抓图、精确按压、子进程管道
-│   ├── gui.c            # Win32 暗色界面（自绘按钮/滑块/预览/日志）
-│   └── build/jump_rl.exe
+├── qt_app.py            # PySide6 主界面与引擎线程（抓图/按压/统计/预览/日志）
+├── win_backend.py       # Win32 抓图、精确按压、窗口枚举、鼠标与键盘全局钩子
 ├── ml/
-│   ├── worker.py        # 推理进程主循环与管道协议
+│   ├── worker.py        # 推理主循环：识别 → 决策 → 反馈 → 学习 → 自动重开
+│   ├── yolo_vision.py   # YOLO + 传统 CV 融合，对比上一帧与背景挑出新方块
 │   ├── policy.py        # numpy 策略网络（REINFORCE + 续训）
-│   ├── landing.py       # 落点方砖检测与奖励计算
+│   ├── landing.py       # 落点方砖检测、帧对齐投影与奖励计算
 │   ├── ocr.py           # Windows 中文 OCR，结算/排行榜页面判定
 │   └── selftest.py      # 离线自测（不碰真实鼠标）
 ├── ai_vision.py         # 视觉识别（原项目算法保留）
 ├── ai_control.py        # 抓图工具（ai_vision 采样用）
 ├── common/pc_control.py # 窗口枚举与截图工具
 ├── ml_model.json        # 学习结果（自动生成）
-└── logs/                # 运行日志与画面传输文件
+└── logs/                # 运行日志与识别失败样本
 ```
 
 ---
@@ -139,7 +141,7 @@ wechat-jump-pc/
 .venv\Scripts\python.exe ml\selftest.py
 ```
 
-覆盖三部分：策略网络在模拟环境里是否收敛并能续训、视觉识别是否正常、C 端管道协议与自动重开是否跑通。
+覆盖三部分：策略网络在模拟环境里是否收敛并能续训、视觉识别是否正常、引擎的请求/响应流程（含手动模式点击位置）与自动重开是否跑通。
 
 ---
 
@@ -159,9 +161,7 @@ wechat-jump-pc/
 
 **Q: 改了代码要重新编译？**
 
-```
-gcc -O2 -o native\build\jump_rl.exe native\gui.c native\core.c -luser32 -lgdi32 -lwinmm -mwindows
-```
+不需要。界面与逻辑都是 Python，改完关掉窗口重新执行 `run.bat` 即可。抓图、按压、全局钩子由 `win_backend.py` 用 ctypes 直接调用系统 API，没有额外的本地编译步骤。
 
 ---
 

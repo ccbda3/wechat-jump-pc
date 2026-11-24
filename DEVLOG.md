@@ -7,19 +7,20 @@
 ## 项目速览
 
 - 路径：仓库根目录（Windows 11）
-- 架构：C 写界面与 Win32（抓图/按压/窗口枚举），Python 写视觉、OCR 与策略网络，管道只传 JSON 协议行，画面走文件
-- 环境：项目内 `.venv`，Python 3.13.7 + Pillow + numpy + opencv-python + mss + winrt OCR 包
-- 启动：`native\build\jump_rl.exe`（或 `run.bat`）
+- 架构：PySide6 写界面与引擎线程，`win_backend.py` 用 ctypes 直接做抓图/按压/全局钩子，Python 写视觉、OCR 与策略网络，worker 输出经回调队列进界面
+- 环境：项目内 `.venv`，Python 3.13.7 + Pillow + numpy + opencv-python + mss + winrt OCR 包 + PySide6
+- 启动：`run.bat`（内部为 `.venv\Scripts\pythonw.exe qt_app.py`，不弹控制台）
 - 自测：`.venv\Scripts\python.exe ml\selftest.py`
-- 编译：`gcc -O2 -o native\build\jump_rl.exe native\gui.c native\core.c -luser32 -lgdi32 -lwinmm -mwindows`
+- 编译：无，纯 Python，改完重启进程即可
 
 ## 文件职责
 
 | 文件 | 作用 |
 | --- | --- |
-| `native/gui.c` | Win32 自绘界面、窗口列表、预览、日志、统计卡片 |
-| `native/core.c` | PrintWindow 抓图、精确按压、Python 子进程与管道协议 |
+| `qt_app.py` | PySide6 主界面：窗口列表、统计卡片、奖励曲线、预览、日志、引擎线程与预览线程 |
+| `win_backend.py` | PrintWindow 抓图、精确按压、窗口枚举、鼠标/键盘全局钩子 |
 | `ml/worker.py` | 推理主循环：识别 → 决策 → 反馈 → 学习 → 自动重开 |
+| `ml/yolo_vision.py` | YOLO + 传统 CV 融合，对比上一帧与背景挑出新方块 |
 | `ml/policy.py` | numpy 策略网络（21 动作 REINFORCE + 基线 + 熵正则 + 续训） |
 | `ml/landing.py` | 用棋子脚下那块方砖算落点横向偏差，作为奖励依据 |
 | `ml/ocr.py` | Windows 中文 OCR，判定结算页/排行榜/主页并给出点击点 |
