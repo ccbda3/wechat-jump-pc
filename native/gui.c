@@ -1182,7 +1182,13 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show) {
     wc.hCursor = LoadCursor(NULL, IDC_ARROW);
     wc.hbrBackground = NULL;
     wc.lpszClassName = cls;
-    wc.hIcon = LoadIcon(NULL, IDI_APPLICATION);
+    wc.hIcon = (HICON)LoadImageW(inst, MAKEINTRESOURCEW(IDI_APP), IMAGE_ICON,
+                                 GetSystemMetrics(SM_CXICON),
+                                 GetSystemMetrics(SM_CYICON), 0);
+    if (!wc.hIcon) wc.hIcon = LoadIconW(NULL, MAKEINTRESOURCEW(32512));
+    wc.hIconSm = (HICON)LoadImageW(inst, MAKEINTRESOURCEW(IDI_APP), IMAGE_ICON,
+                                   GetSystemMetrics(SM_CXSMICON),
+                                   GetSystemMetrics(SM_CYSMICON), 0);
     RegisterClassExW(&wc);
 
     int ww = S(1200);

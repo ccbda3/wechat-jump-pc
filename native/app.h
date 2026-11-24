@@ -12,6 +12,7 @@
 #define MAX_LOG 400
 #define MAX_WIN 48
 #define REWARD_SLOTS 48
+#define IDI_APP 101
 
 #define ST_STOPPED 0
 #define ST_RUNNING 1

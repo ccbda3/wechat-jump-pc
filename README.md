@@ -183,10 +183,11 @@ wechat-jump-pc/
 
 **Q: 改了代码要重新编译？**
 
-界面是 C，改 `native` 里的文件后需要重新编译：
+界面是 C，改 `native` 里的文件后需要重新编译（图标资源也要一起编进去）：
 
 ```
-gcc -O2 -o native\build\jump_rl.exe native\gui.c native\core.c -luser32 -lgdi32 -lwinmm -lm -mwindows
+windres native\app.rc -I native -O coff -o native\build\app.res
+gcc -O2 -o native\build\jump_rl.exe native\build\app.res native\gui.c native\core.c -luser32 -lgdi32 -lwinmm -lm -mwindows
 ```
 
 只改 `ml/` 里的 Python 逻辑不用编译，关掉程序重新打开即可。

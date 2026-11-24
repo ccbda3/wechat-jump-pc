@@ -11,7 +11,7 @@
 - 环境：项目内 `.venv`，Python 3.13.7 + Pillow + numpy + opencv-python + mss + winrt OCR 包；界面用 MinGW gcc 15.2 编译
 - 启动：`native\build\jump_rl.exe`（或桌面「微信跳一跳训练台」快捷方式），`-mwindows` 无控制台
 - 自测：`.venv\Scripts\python.exe ml\selftest.py`
-- 编译：`gcc -O2 -o native\build\jump_rl.exe native\gui.c native\core.c -luser32 -lgdi32 -lwinmm -lm -mwindows`
+- 编译：`windres native\app.rc -I native -O coff -o native\build\app.res`，再 `gcc -O2 -o native\build\jump_rl.exe native\build\app.res native\gui.c native\core.c -luser32 -lgdi32 -lwinmm -lm -mwindows`
 
 ## 文件职责
 
@@ -20,6 +20,8 @@
 | `native/app.h` | C 侧共享结构体与全局状态声明 |
 | `native/gui.c` | Win32 经典灰底界面、窗口列表、预览、日志、统计卡、鼠标/键盘全局钩子 |
 | `native/core.c` | PrintWindow 抓图、精确按压、帧文件与 JSON 管道、引擎线程 |
+| `native/app.rc` | 图标资源脚本，把 `app.ico` 编进 exe |
+| `native/app.ico` | 多尺寸应用图标（16~256），exe 与窗口共用 |
 | `ml/worker.py` | 推理主循环：识别 → 决策 → 反馈 → 学习 → 自动重开 |
 | `ml/yolo_vision.py` | YOLO + 传统 CV 融合，对比上一帧与背景挑出新方块 |
 | `ml/correct.py` | 人工修正样本：梯度模板保存、评分与全图定位 |
