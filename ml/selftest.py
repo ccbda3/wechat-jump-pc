@@ -170,18 +170,23 @@ def test_topface():
     cv2.fillPoly(img, [front], (183, 218, 93))
     right = np.array([[320, 130], [200, 190], [200, 300], [320, 240]], np.int32)
     cv2.fillPoly(img, [right], (170, 205, 80))
+    cv2.ellipse(img, (135, 220), (20, 34), 0, 0, 360, (235, 235, 235), -1)
+    cv2.ellipse(img, (265, 220), (20, 34), 0, 0, 360, (235, 235, 235), -1)
     v = YoloVision()
     bg = bg_color(img)
     side = (0.9, 60.0, 210.0, 340.0, 310.0)
     grown = v._grow_up(img, side, bg)
     ty = face_center_y(img, (grown[1], grown[2], grown[3] - grown[1],
                              grown[4] - grown[2]), bg)
-    print("顶面修正：侧面框 y=%.0f → 扩展后 y=%.0f，顶面中心 y=%.0f"
-          % (side[2], grown[2], ty))
+    bx, by = v._board_point(img, grown, bg)
+    print("顶面修正：侧面框 y=%.0f → 扩展后 y=%.0f，顶面中心 (%.0f, %.0f)"
+          % (side[2], grown[2], bx, by))
     if grown[2] > 120 or not v._open_above(img, grown, bg):
         raise SystemExit("侧面框未能向上扩展到顶面")
     if not (95 < ty < 180):
         raise SystemExit("顶面中心估计异常 %.0f" % ty)
+    if abs(bx - 200) > 10 or by > 170:
+        raise SystemExit("侧面白点影响了目标点 (%.0f, %.0f)" % (bx, by))
     same = v._pick([(0.9, 260.0, 250.0, 400.0, 330.0)], 200, 300)
     if same is None:
         raise SystemExit("同高度近方块被误排除")

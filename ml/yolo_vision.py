@@ -4,7 +4,7 @@ import os
 import cv2
 import numpy as np
 
-from ai_vision import FrameResult, face_center_y, find_top_spot
+from ai_vision import FrameResult, face_center_y
 from correct import Corrector
 from ocr import bg_color
 
@@ -134,6 +134,11 @@ class YoloVision:
         area = (ax2 - ax1) * (ay2 - ay1) + (bx2 - bx1) * (by2 - by1) - inter
         return inter / area if area > 0 else 0.0
 
+    def _board_point(self, bgr, p, bg):
+        tx = (p[1] + p[3]) / 2.0
+        ty = face_center_y(bgr, (p[1], p[2], p[3] - p[1], p[4] - p[2]), bg)
+        return tx, ty
+
     def _pick(self, plats, px, py, old_box=None, extra=True):
         best = None
         for p in plats:
@@ -210,12 +215,7 @@ class YoloVision:
         if best is None:
             return None
         p = best[1]
-        spot = find_top_spot(bgr, (p[1], p[2], p[3] - p[1], p[4] - p[2]))
-        if spot and spot[1] <= p[2] + (p[4] - p[2]) * 0.55:
-            tx, ty = spot
-        else:
-            tx = (p[1] + p[3]) / 2.0
-            ty = face_center_y(bgr, (p[1], p[2], p[3] - p[1], p[4] - p[2]), bg)
+        tx, ty = self._board_point(bgr, p, bg)
         d = math.hypot(tx - px, ty - py)
         method = "yolo"
         box = (p[1], p[2], p[3] - p[1], p[4] - p[2])
