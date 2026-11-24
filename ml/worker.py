@@ -113,7 +113,10 @@ def analyze_view(cfg, frame, ref=None):
     sub, x0 = game_crop(frame)
     ref_sub = None
     if ref is not None:
-        ref_sub = ((ref[0][0] - x0, ref[0][1]), (ref[1][0] - x0, ref[1][1]))
+        ref_sub = ((ref[1][0] - x0, ref[1][1]), (ref[2][0] - x0, ref[2][1]))
+        if len(ref) > 3 and ref[3]:
+            ref_sub = ref_sub + ((ref[3][0] - x0, ref[3][1],
+                                  ref[3][2], ref[3][3]),)
     res = yolo_view(sub, ref_sub)
     if res is None:
         res = analyze(sub, cfg, prefer="cv")
@@ -435,7 +438,8 @@ class Runner:
             self.episode_open = True
             self.need_start = False
             self.score_before = self.ocr.score_crop(sub)[0]
-            self.prev = (frame.copy(), tuple(res.piece), tuple(res.board))
+            self.prev = (frame.copy(), tuple(res.piece), tuple(res.board),
+                         tuple(res.box) if res.box else None)
             self.logline("手动目标 (%.0f,%.0f) 距离 %.0fpx 按压 %.0fms"
                          % (tx, ty, d, ms))
             emit({"t": "res", "kind": "press", "ms": ms, "action": -1,
@@ -485,7 +489,8 @@ class Runner:
             self.episode_open = True
             self.need_start = False
             self.score_before = self.ocr.score_crop(sub)[0]
-            self.prev = (frame.copy(), tuple(res.piece), tuple(res.board))
+            self.prev = (frame.copy(), tuple(res.piece), tuple(res.board),
+                         tuple(res.box) if res.box else None)
             self.logline("人工修正目标 (%.0f,%.0f) 距离 %.0fpx 按压 %.0fms，修正样本 %d→%d"
                          % (tx, ty, d, ms, before, self.calib.count))
             emit({"t": "res", "kind": "press", "ms": ms, "action": -1,
@@ -524,7 +529,8 @@ class Runner:
         self.episode_open = True
         self.need_start = False
         self.score_before = self.ocr.score_crop(sub)[0]
-        self.prev = (frame.copy(), tuple(res.piece), tuple(res.board))
+        self.prev = (frame.copy(), tuple(res.piece), tuple(res.board),
+                     tuple(res.box) if res.box else None)
         self.logline("第%02d跳 距离%.0fpx 动作%d 系数%.2f 按压%.0fms 熵%.2f %s%s"
                      % (self.jumps_in_episode + 1, d, action, scale, ms, ent,
                         res.method, self.box_text(res)))

@@ -157,6 +157,39 @@ def test_calib():
     os.remove(tmp)
 
 
+def test_topface():
+    from ai_vision import face_center_y
+    from ml.yolo_vision import YoloVision
+    from ocr import bg_color
+
+    img = np.zeros((360, 400, 3), np.uint8)
+    img[:, :] = (216, 231, 232)
+    top = np.array([[200, 70], [320, 130], [200, 190], [80, 130]], np.int32)
+    cv2.fillPoly(img, [top], (198, 236, 100))
+    front = np.array([[80, 130], [200, 190], [200, 300], [80, 240]], np.int32)
+    cv2.fillPoly(img, [front], (183, 218, 93))
+    right = np.array([[320, 130], [200, 190], [200, 300], [320, 240]], np.int32)
+    cv2.fillPoly(img, [right], (170, 205, 80))
+    v = YoloVision()
+    bg = bg_color(img)
+    side = (0.9, 60.0, 210.0, 340.0, 310.0)
+    grown = v._grow_up(img, side, bg)
+    ty = face_center_y(img, (grown[1], grown[2], grown[3] - grown[1],
+                             grown[4] - grown[2]), bg)
+    print("顶面修正：侧面框 y=%.0f → 扩展后 y=%.0f，顶面中心 y=%.0f"
+          % (side[2], grown[2], ty))
+    if grown[2] > 120 or not v._open_above(img, grown, bg):
+        raise SystemExit("侧面框未能向上扩展到顶面")
+    if not (95 < ty < 180):
+        raise SystemExit("顶面中心估计异常 %.0f" % ty)
+    same = v._pick([(0.9, 260.0, 250.0, 400.0, 330.0)], 200, 300)
+    if same is None:
+        raise SystemExit("同高度近方块被误排除")
+    under = v._pick([(0.9, 120.0, 180.0, 280.0, 330.0)], 200, 300)
+    if under is not None:
+        raise SystemExit("脚下方块未被排除")
+
+
 def test_worker():
     worker = os.path.join(ROOT, "ml", "worker.py")
     py = os.path.join(ROOT, ".venv", "Scripts", "python.exe")
@@ -265,6 +298,8 @@ def main():
     test_policy()
     print("== 视觉识别 ==")
     test_vision()
+    print("== 顶面识别 ==")
+    test_topface()
     print("== 修正样本 ==")
     test_calib()
     print("== 管道联调 ==")
