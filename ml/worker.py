@@ -6,9 +6,11 @@ import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
-PROTO = sys.stdout.buffer
+PROTO = None
 if os.environ.get("JUMP_WORKER_CHILD"):
     sys.stdout = sys.stderr
+if sys.stdout is not None:
+    PROTO = sys.stdout.buffer
 
 EMIT_HOOK = None
 
@@ -68,6 +70,8 @@ def emit(obj):
     try:
         if EMIT_HOOK is not None:
             EMIT_HOOK(obj)
+            return
+        if PROTO is None:
             return
         PROTO.write(json.dumps(obj, ensure_ascii=False, separators=(",", ":")).encode("utf-8") + b"\n")
         PROTO.flush()
