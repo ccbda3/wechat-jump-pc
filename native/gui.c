@@ -379,6 +379,11 @@ static void do_layout(RECT* c, Layout* L) {
     L->btn_pause.right = ix + iw;
     L->btn_pause.bottom = L->btn_pause.top + S(36);
 
+    L->btn_blocks.left = ix;
+    L->btn_blocks.top = L->btn_pause.bottom + S(8);
+    L->btn_blocks.right = ix + iw;
+    L->btn_blocks.bottom = L->btn_blocks.top + S(34);
+
     L->status.left = ix;
     L->status.top = L->panel.bottom - S(44);
     L->status.right = ix + iw;
@@ -408,6 +413,7 @@ static void do_layout(RECT* c, Layout* L) {
     g_btn[BTN_START] = L->btn_start;
     g_btn[BTN_STOP] = L->btn_stop;
     g_btn[BTN_PAUSE] = L->btn_pause;
+    g_btn[BTN_BLOCKS] = L->btn_blocks;
 }
 
 static int state_code(void) {
@@ -765,6 +771,8 @@ static void paint(HWND hwnd) {
                 g_btn_hover == BTN_STOP, running, g_btn_down == BTN_STOP);
     draw_button(mem, g_layout.btn_pause, g_paused ? L"继续" : L"暂停",
                 g_btn_hover == BTN_PAUSE, running, g_btn_down == BTN_PAUSE);
+    draw_button(mem, g_layout.btn_blocks, L"特殊方块列表",
+                g_btn_hover == BTN_BLOCKS, 1, g_btn_down == BTN_BLOCKS);
 
     StatInfo st;
     EnterCriticalSection(&g_cs);
@@ -877,6 +885,8 @@ static void click_row(int my) {
     InvalidateRect(g_main, NULL, FALSE);
 }
 
+static void open_block_list(void);
+
 static void do_button(int id) {
     if (id == BTN_REFRESH) {
         refresh_windows();
@@ -895,15 +905,309 @@ static void do_button(int id) {
         if (g_running) worker_stop();
     } else if (id == BTN_PAUSE) {
         if (!g_running) return;
-        int was = (int)g_paused;
         InterlockedExchange(&g_paused, g_paused ? 0 : 1);
-        if (!was && g_paused && !g_assist)
-            InterlockedExchange(&g_pause_mark_req, 1);
-        else if (was && !g_paused)
-            InterlockedExchange(&g_pause_mark_req, 0);
         log_line(g_paused ? L"已暂停" : L"已继续");
+    } else if (id == BTN_BLOCKS) {
+        open_block_list();
     }
     InvalidateRect(g_main, NULL, FALSE);
+}
+
+#define BLOCK_MAX 60
+
+typedef struct {
+    int id;
+    int checked;
+    HBITMAP bmp;
+    wchar_t file[MAX_PATH];
+} BlockItem;
+
+typedef struct {
+    RECT r;
+    int idx;
+} BlockCell;
+
+static BlockItem g_blocks[BLOCK_MAX];
+static int g_block_n = 0;
+static int g_block_scroll = 0;
+static HWND g_block_wnd = NULL;
+static int g_block_class = 0;
+static wchar_t g_block_root[MAX_PATH] = L"";
+
+static void block_root_dir(wchar_t* root) {
+    wchar_t p[MAX_PATH];
+    if (!GetModuleFileNameW(NULL, p, MAX_PATH)) {
+        wcscpy(root, L".");
+        return;
+    }
+    wchar_t* s = wcsrchr(p, L'\\');
+    if (!s) {
+        wcscpy(root, L".");
+        return;
+    }
+    *s = 0;
+    for (int i = 0; i < 4; i++) {
+        wchar_t probe[MAX_PATH];
+        wsprintfW(probe, L"%s\\ml\\worker.py", p);
+        if (GetFileAttributesW(probe) != INVALID_FILE_ATTRIBUTES) {
+            wcscpy(root, p);
+            return;
+        }
+        s = wcsrchr(p, L'\\');
+        if (!s) break;
+        *s = 0;
+    }
+    wcscpy(root, L".");
+}
+
+static void block_load(void) {
+    for (int i = 0; i < g_block_n; i++) {
+        if (g_blocks[i].bmp) DeleteObject(g_blocks[i].bmp);
+        g_blocks[i].bmp = NULL;
+    }
+    g_block_n = 0;
+    g_block_scroll = 0;
+    block_root_dir(g_block_root);
+    wchar_t lib[MAX_PATH], chk[MAX_PATH];
+    wsprintfW(lib, L"%s\\ml\\block_lib.csv", g_block_root);
+    wsprintfW(chk, L"%s\\ml\\block_checks.csv", g_block_root);
+    int cid[BLOCK_MAX], cval[BLOCK_MAX], cn = 0;
+    FILE* f = _wfopen(chk, L"r");
+    if (f) {
+        char line[128];
+        while (fgets(line, sizeof(line), f) && cn < BLOCK_MAX) {
+            int id = 0, v = 0;
+            if (sscanf(line, "%d,%d", &id, &v) == 2) {
+                cid[cn] = id;
+                cval[cn] = v;
+                cn++;
+            }
+        }
+        fclose(f);
+    }
+    f = _wfopen(lib, L"r");
+    if (f) {
+        char line[512];
+        while (fgets(line, sizeof(line), f) && g_block_n < BLOCK_MAX) {
+            int id = 0;
+            char file[128];
+            file[0] = 0;
+            if (sscanf(line, "%d,%127[^,]", &id, file) != 2) continue;
+            BlockItem* b = &g_blocks[g_block_n];
+            b->id = id;
+            b->checked = 0;
+            for (int k = 0; k < cn; k++)
+                if (cid[k] == id) b->checked = cval[k];
+            MultiByteToWideChar(CP_UTF8, 0, file, -1, b->file, MAX_PATH);
+            wchar_t path[MAX_PATH];
+            wsprintfW(path, L"%s\\ml\\blocks\\%s", g_block_root, b->file);
+            b->bmp = (HBITMAP)LoadImageW(NULL, path, IMAGE_BITMAP, 0, 0,
+                                         LR_LOADFROMFILE | LR_CREATEDIBSECTION);
+            g_block_n++;
+        }
+        fclose(f);
+    }
+}
+
+static void block_save(void) {
+    if (!g_block_root[0]) return;
+    wchar_t path[MAX_PATH], tmp[MAX_PATH];
+    wsprintfW(path, L"%s\\ml\\block_checks.csv", g_block_root);
+    wsprintfW(tmp, L"%s\\ml\\block_checks.tmp", g_block_root);
+    FILE* f = _wfopen(tmp, L"w");
+    if (!f) return;
+    for (int i = 0; i < g_block_n; i++)
+        fprintf(f, "%d,%d\n", g_blocks[i].id, g_blocks[i].checked);
+    fclose(f);
+    MoveFileExW(tmp, path, MOVEFILE_REPLACE_EXISTING);
+}
+
+static int block_cols(void) {
+    return 4;
+}
+
+static int block_cells(HWND hwnd, BlockCell* out, int max) {
+    RECT cr;
+    GetClientRect(hwnd, &cr);
+    int cw = S(146), ch = S(164), gap = S(10), left = S(14), top = S(44);
+    int cols = block_cols();
+    int rows_total = (g_block_n + cols - 1) / cols;
+    int rows_vis = (cr.bottom - top) / ch;
+    if (rows_vis < 1) rows_vis = 1;
+    int max_scroll = rows_total - rows_vis;
+    if (max_scroll < 0) max_scroll = 0;
+    if (g_block_scroll > max_scroll) g_block_scroll = max_scroll;
+    if (g_block_scroll < 0) g_block_scroll = 0;
+    int n = 0;
+    for (int r = g_block_scroll; r < rows_total && n < max; r++) {
+        for (int c = 0; c < cols && n < max; c++) {
+            int idx = r * cols + c;
+            if (idx >= g_block_n) break;
+            RECT q;
+            q.left = left + c * (cw + gap);
+            q.top = top + (r - g_block_scroll) * ch;
+            q.right = q.left + cw;
+            q.bottom = q.top + ch - gap;
+            out[n].r = q;
+            out[n].idx = idx;
+            n++;
+        }
+    }
+    return n;
+}
+
+static void block_paint(HWND hwnd) {
+    PAINTSTRUCT ps;
+    HDC dc = BeginPaint(hwnd, &ps);
+    RECT cr;
+    GetClientRect(hwnd, &cr);
+    fill_rect(dc, cr, C_BG);
+    RECT hr;
+    hr.left = S(14);
+    hr.top = S(8);
+    hr.right = cr.right - S(14);
+    hr.bottom = hr.top + S(26);
+    draw_text(dc, hr, L"勾选会停留加分的特殊方块（滚轮翻页，关闭重开刷新）",
+              g_f_sec, C_ACCENT, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    if (g_block_n == 0) {
+        draw_text(dc, cr, L"还没有采集到方块，先跑一局再来", g_f_body, C_MUTED,
+                  DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        EndPaint(hwnd, &ps);
+        return;
+    }
+    BlockCell cells[64];
+    int n = block_cells(hwnd, cells, 64);
+    HDC mem = CreateCompatibleDC(dc);
+    for (int i = 0; i < n; i++) {
+        RECT q = cells[i].r;
+        BlockItem* b = &g_blocks[cells[i].idx];
+        bevel_box(dc, q, C_CARD, 0);
+        RECT img;
+        img.left = q.left + S(16);
+        img.right = q.right - S(16);
+        img.top = q.top + S(8);
+        img.bottom = img.top + S(96);
+        if (b->bmp) {
+            HGDIOBJ old = SelectObject(mem, b->bmp);
+            SetStretchBltMode(dc, HALFTONE);
+            SetBrushOrgEx(dc, 0, 0, NULL);
+            StretchBlt(dc, img.left, img.top, img.right - img.left,
+                       img.bottom - img.top, mem, 0, 0, 96, 96, SRCCOPY);
+            SelectObject(mem, old);
+        } else {
+            fill_rect(dc, img, C_STROKE);
+        }
+        RECT cb;
+        cb.left = q.left + S(10);
+        cb.right = cb.left + S(18);
+        cb.bottom = q.bottom - S(8);
+        cb.top = cb.bottom - S(18);
+        bevel_box(dc, cb, C_CARD, 0);
+        if (b->checked)
+            draw_text(dc, cb, L"✓", g_f_body, C_FG,
+                      DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        RECT ir;
+        ir.left = cb.right + S(8);
+        ir.right = q.right - S(6);
+        ir.top = cb.top - S(2);
+        ir.bottom = q.bottom;
+        wchar_t buf[32];
+        _snwprintf(buf, 31, L"#%d", b->id);
+        buf[31] = 0;
+        draw_text(dc, ir, buf, g_f_small, C_FG,
+                  DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    }
+    DeleteDC(mem);
+    EndPaint(hwnd, &ps);
+}
+
+static LRESULT CALLBACK block_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+    switch (msg) {
+    case WM_ERASEBKGND:
+        return 1;
+    case WM_PAINT:
+        block_paint(hwnd);
+        return 0;
+    case WM_SIZE:
+        InvalidateRect(hwnd, NULL, FALSE);
+        return 0;
+    case WM_MOUSEWHEEL: {
+        int delta = GET_WHEEL_DELTA_WPARAM(wp);
+        g_block_scroll += (delta > 0) ? -1 : 1;
+        if (g_block_scroll < 0) g_block_scroll = 0;
+        InvalidateRect(hwnd, NULL, FALSE);
+        return 0;
+    }
+    case WM_LBUTTONDOWN: {
+        POINT p;
+        p.x = GET_X_LPARAM(lp);
+        p.y = GET_Y_LPARAM(lp);
+        BlockCell cells[64];
+        int n = block_cells(hwnd, cells, 64);
+        for (int i = 0; i < n; i++) {
+            if (PtInRect(&cells[i].r, p)) {
+                int idx = cells[i].idx;
+                g_blocks[idx].checked = !g_blocks[idx].checked;
+                block_save();
+                InvalidateRect(hwnd, NULL, FALSE);
+                break;
+            }
+        }
+        return 0;
+    }
+    case WM_CLOSE:
+        DestroyWindow(hwnd);
+        return 0;
+    case WM_DESTROY:
+        g_block_wnd = NULL;
+        return 0;
+    }
+    return DefWindowProcW(hwnd, msg, wp, lp);
+}
+
+static void open_block_list(void) {
+    if (g_block_wnd && IsWindow(g_block_wnd)) {
+        ShowWindow(g_block_wnd, SW_SHOW);
+        SetForegroundWindow(g_block_wnd);
+        return;
+    }
+    block_load();
+    if (!g_block_class) {
+        WNDCLASSEXW wc;
+        memset(&wc, 0, sizeof(wc));
+        wc.cbSize = sizeof(wc);
+        wc.style = CS_HREDRAW | CS_VREDRAW;
+        wc.lpfnWndProc = block_proc;
+        wc.hInstance = g_inst;
+        wc.hCursor = LoadCursor(NULL, IDC_ARROW);
+        wc.lpszClassName = L"JumpBlockList";
+        wc.hIcon = (HICON)LoadImageW(g_inst, MAKEINTRESOURCEW(IDI_APP),
+                                     IMAGE_ICON, 0, 0, 0);
+        RegisterClassExW(&wc);
+        g_block_class = 1;
+    }
+    RECT wa;
+    SystemParametersInfoW(SPI_GETWORKAREA, 0, &wa, 0);
+    int ww = S(820);
+    int wh = S(640);
+    int x = wa.left + S(30);
+    int y = wa.top + S(30);
+    if (g_main && IsWindow(g_main)) {
+        RECT mr;
+        GetWindowRect(g_main, &mr);
+        x = mr.left - ww - S(16);
+        if (x < wa.left + S(10)) x = wa.left + S(10);
+        y = mr.top;
+        if (y + wh > wa.bottom) y = wa.bottom - wh - S(10);
+        if (y < wa.top + S(10)) y = wa.top + S(10);
+    }
+    g_block_wnd = CreateWindowExW(0, L"JumpBlockList", L"特殊方块列表",
+                                  WS_OVERLAPPEDWINDOW, x, y, ww, wh,
+                                  NULL, NULL, g_inst, NULL);
+    if (g_block_wnd) {
+        ShowWindow(g_block_wnd, SW_SHOW);
+        UpdateWindow(g_block_wnd);
+    }
 }
 
 static DWORD WINAPI preview_main(LPVOID param) {

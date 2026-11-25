@@ -57,6 +57,7 @@ typedef struct {
     RECT btn_start;
     RECT btn_stop;
     RECT btn_pause;
+    RECT btn_blocks;
     RECT status;
     RECT cards[7];
     RECT preview;
@@ -68,7 +69,8 @@ typedef enum {
     BTN_START = 1,
     BTN_STOP = 2,
     BTN_PAUSE = 3,
-    BTN_COUNT = 4
+    BTN_BLOCKS = 4,
+    BTN_COUNT = 5
 } BtnId;
 
 extern HINSTANCE g_inst;
@@ -99,7 +101,6 @@ extern volatile LONG g_assist;
 extern volatile LONG g_assist_got;
 extern volatile LONG g_assist_x;
 extern volatile LONG g_assist_y;
-extern volatile LONG g_pause_mark_req;
 extern HWND g_target;
 extern wchar_t g_target_title[256];
 extern int g_btn_hover;

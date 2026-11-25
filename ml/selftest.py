@@ -1,6 +1,7 @@
 import json
 import math
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -203,34 +204,34 @@ def test_topface():
         raise SystemExit("只有后方方块时方向标记错误")
 
 
-def test_special():
-    tmp = os.path.join(tempfile.gettempdir(), "jump_special_selftest.json")
-    if os.path.exists(tmp):
-        os.remove(tmp)
-    os.environ["JUMP_SPECIAL_MEMORY"] = tmp
-    from ml.special import (block_features, matches_memory, memory_count,
-                            remember, special_like)
+def test_block_lib():
+    base = tempfile.mkdtemp(prefix="jump_blocks_")
+    os.environ["JUMP_BLOCK_DIR"] = os.path.join(base, "blocks")
+    os.environ["JUMP_BLOCK_LIB"] = os.path.join(base, "lib.csv")
+    os.environ["JUMP_BLOCK_CHECKS"] = os.path.join(base, "checks.csv")
+    from ml.block_lib import is_special, observe
+    from ml.special import block_features
 
     block = {"left": 60, "right": 240, "top": 70, "bottom": 220, "x": 150}
     piece = (150, 200)
     dark = np.full((300, 300, 3), (205, 205, 205), np.uint8)
     dark[70:220, 60:240] = (30, 30, 30)
     bright = np.full((300, 300, 3), (205, 205, 205), np.uint8)
-    bright[70:220, 60:240] = (212, 212, 212)
+    bright[70:220, 60:240] = (150, 120, 200)
     fd = block_features(dark, block, piece)
     fb = block_features(bright, block, piece)
-    if not special_like(fd) or special_like(fb):
-        raise SystemExit("特殊方块特征筛选异常")
-    n = remember(fd)
-    print("特殊样本：%d 个，暗块命中=%s，亮块命中=%s"
-          % (n, matches_memory(fd), matches_memory(fb)))
-    if n != 1 or memory_count() != 1:
-        raise SystemExit("特殊样本保存失败")
-    if not matches_memory(fd):
-        raise SystemExit("特殊样本自身未命中")
-    if matches_memory(fb):
-        raise SystemExit("普通亮块被误判成特殊样本")
-    os.remove(tmp)
+    a = observe(dark, block, piece, fd)
+    b = observe(dark, block, piece, fd)
+    c = observe(bright, block, piece, fb)
+    with open(os.environ["JUMP_BLOCK_CHECKS"], "w", encoding="utf-8") as f:
+        f.write("%d,1\n%d,0\n" % (a, c))
+    sd = is_special(fd)
+    sb = is_special(fb)
+    print("方块列表：id=%s 重复=%s 新id=%s 勾选命中=%s 未勾选命中=%s"
+          % (a, b, c, sd, sb))
+    if a != 1 or b is not None or c != 2 or not sd or sb:
+        raise SystemExit("方块列表采集或勾选异常")
+    shutil.rmtree(base, ignore_errors=True)
 
 
 def test_newness():
@@ -263,8 +264,9 @@ def test_worker():
     env["JUMP_CALIB_PATH"] = calib
     env["JUMP_ASK_CONF"] = "0"
     env["JUMP_LEGACY_FALLBACK"] = "1"
-    env["JUMP_SPECIAL_MEMORY"] = os.path.join(
-        tempfile.gettempdir(), "jump_special_worker.json")
+    env["JUMP_BLOCK_DIR"] = os.path.join(tempfile.gettempdir(), "jump_blocks_worker")
+    env["JUMP_BLOCK_LIB"] = os.path.join(tempfile.gettempdir(), "jump_blocks_worker.csv")
+    env["JUMP_BLOCK_CHECKS"] = os.path.join(tempfile.gettempdir(), "jump_blocks_worker_checks.csv")
     proc = subprocess.Popen(
         [py, worker], cwd=ROOT, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
         stderr=subprocess.PIPE, bufsize=0, env=env)
@@ -378,7 +380,7 @@ def main():
     print("== 新区域对比 ==")
     test_newness()
     print("== 特殊采样 ==")
-    test_special()
+    test_block_lib()
     print("== 修正样本 ==")
     test_calib()
     print("== 管道联调 ==")

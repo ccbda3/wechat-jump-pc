@@ -42,6 +42,7 @@ def block_features(sub, block, piece):
     hstd = float(hues.std()) / 90.0 if hues.size else 0.0
     gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
     edges = cv2.Canny(gray, 45, 120) > 0
+    mean = crop[keep].mean(axis=0) / 255.0
     return [
         float((v < 45).mean()),
         float((v < 95).mean()),
@@ -49,13 +50,16 @@ def block_features(sub, block, piece):
         min(1.0, hstd),
         float((v > 200).mean()),
         float(edges[keep].mean()),
+        float(mean[0]),
+        float(mean[1]),
+        float(mean[2]),
     ]
 
 
 def special_like(features):
-    if features is None:
+    if features is None or len(features) < 6:
         return False
-    dark, lowv, sat, hstd, bright, edge = [float(v) for v in features]
+    dark, lowv, sat, hstd, bright, edge = [float(v) for v in features[:6]]
     if dark > 0.15 or lowv > 0.25:
         return True
     if sat > 0.12 and hstd > 0.15:

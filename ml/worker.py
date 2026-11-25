@@ -22,8 +22,8 @@ from correct import Corrector
 from policy import MAX_PRESS_MS, MIN_PRESS_MS, MS_PER_PX, Policy
 from ocr import OcrReader, game_crop
 from landing import landing_reward, project_center
-from special import (block_features, block_texture, matches_memory,
-                     memory_count, remember, special_block, special_like)
+import block_lib
+from special import block_features, block_texture, special_block
 from yolo_vision import YoloVision
 
 MODEL_PATH = os.path.join(ROOT, "ml_model.json")
@@ -195,8 +195,6 @@ class Runner:
         self.retry = 0
         self.prev = None
         self.calib = Corrector()
-        self.last_kind = None
-        self.last_feat = None
         self._init_log()
 
     def note_wait(self, reason, res=None, frame=None):
@@ -255,19 +253,6 @@ class Runner:
             self.best_score = self.score
         return gain
 
-    def handle_pause_mark(self):
-        if self.last_kind is not None:
-            self.logline("暂停时当前方块已被识别为特殊方块，按普通暂停处理")
-            return
-        if self.last_feat is None:
-            self.logline("暂停：暂时没有可记录的特殊方块")
-            return
-        if not special_like(self.last_feat):
-            self.logline("暂停：这块看起来不是特殊方块，未记录")
-            return
-        n = remember(self.last_feat)
-        self.logline("已记录特殊方块样本 #%d，下次遇到相似方块会停留加分" % n)
-
     def handle_init(self, req):
         s = self.policy.stats()
         if s["jumps"] > 0:
@@ -278,8 +263,9 @@ class Runner:
                          % (24, 21))
         if self.calib.count:
             self.logline("已加载 %d 个修正样本，识别时会优先参考人工点过的目标" % self.calib.count)
-        if memory_count():
-            self.logline("已加载 %d 个特殊方块样本，遇到相似方块会自动停留加分" % memory_count())
+        if block_lib.checked_count():
+            self.logline("特殊方块列表：%d 个已勾选，遇到相似方块会自动停留加分"
+                         % block_lib.checked_count())
         if not self.ocr._init():
             self.logline("警告：系统缺少中文 OCR 语言包，结算页将退回按钮形状识别")
         emit({"t": "res", "kind": "ready", "stats": s})
@@ -304,8 +290,6 @@ class Runner:
         self.episode_reward = 0.0
         self.need_start = True
         self.prev = None
-        self.last_kind = None
-        self.last_feat = None
 
     def box_text(self, res):
         if not res or not res.box:
@@ -704,10 +688,11 @@ class Runner:
             tex = block_texture(sub_after, block, pxy)
             kind = special_block(sub_after, block, pxy)
             feat = block_features(sub_after, block, pxy)
-            if kind is None and matches_memory(feat):
-                kind = "已学特殊方块"
-        self.last_kind = kind
-        self.last_feat = feat
+            new_id = block_lib.observe(sub_after, block, pxy, feat)
+            if new_id:
+                self.logline("新方块已加入特殊方块列表 #%d" % new_id)
+            if kind is None and block_lib.is_special(feat):
+                kind = "列表特殊方块"
         if kind is not None:
             self.logline("特殊方块 %s，停留 %.1fs 拿加分" % (kind, LINGER_S))
             time.sleep(LINGER_S)
@@ -796,8 +781,6 @@ class Runner:
                 self.handle_init(req)
             elif t == "reset":
                 self.handle_reset(req)
-            elif t == "pause_mark":
-                self.handle_pause_mark()
             elif t == "frame":
                 frame = self.read_frame(req)
                 if frame is None:

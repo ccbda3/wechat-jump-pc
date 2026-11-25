@@ -36,4 +36,6 @@ ml_model.json.tmp
 native/build/*.o
 native/build/*.res
 ml/vision_calib.npz
-ml/special_memory.json
+ml/blocks/
+ml/block_lib.csv
+ml/block_checks.csv
