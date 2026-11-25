@@ -153,7 +153,8 @@ class YoloVision:
         return tx, ty
 
     def _pick(self, plats, px, py, old_box=None, extra=True):
-        best = None
+        fwd = None
+        bwd = None
         for p in plats:
             bw = p[3] - p[1]
             if bw < 55:
@@ -167,9 +168,13 @@ class YoloVision:
                 continue
             cx = (p[1] + p[3]) / 2.0
             dist = math.hypot(cx - px, p[2] - py)
-            if best is None or dist < best[0]:
-                best = (dist, p)
-        return best
+            if face_y <= py + 15.0:
+                if fwd is None or dist < fwd[0]:
+                    fwd = (dist, p, True)
+            else:
+                if bwd is None or dist < bwd[0]:
+                    bwd = (dist, p, False)
+        return fwd if fwd is not None else bwd
 
     def analyze(self, bgr, ref=None):
         boxes = self.raw(bgr)
@@ -229,6 +234,8 @@ class YoloVision:
             penalty = 0.5
         if best is None:
             return None
+        if not best[2]:
+            penalty = min(penalty, 0.5)
         p = best[1]
         tx, ty = self._board_point(bgr, p, bg)
         d = math.hypot(tx - px, ty - py)

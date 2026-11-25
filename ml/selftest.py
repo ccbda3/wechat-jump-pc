@@ -193,6 +193,14 @@ def test_topface():
     under = v._pick([(0.9, 120.0, 180.0, 280.0, 330.0)], 200, 300)
     if under is not None:
         raise SystemExit("脚下方块未被排除")
+    back = (0.9, 230.0, 320.0, 430.0, 480.0)
+    ahead = (0.9, 300.0, 180.0, 440.0, 310.0)
+    best = v._pick([back, ahead], 200, 300)
+    if best is None or not best[2] or best[1] is not ahead:
+        raise SystemExit("后方更近的旧方块压过了前方目标")
+    only = v._pick([back], 200, 300)
+    if only is None or only[2]:
+        raise SystemExit("只有后方方块时方向标记错误")
 
 
 def test_worker():
