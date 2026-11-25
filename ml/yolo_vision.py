@@ -10,6 +10,8 @@ from ocr import bg_color
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MODEL_PATH = os.path.join(ROOT, "models", "yolo_jump.pt")
+IMGSZ = 640
+RETRY_IMGSZ = 1152
 
 
 class YoloVision:
@@ -32,18 +34,29 @@ class YoloVision:
             self.model = None
         return self.model is not None
 
-    def raw(self, bgr):
-        if not self.load():
-            return None
-        try:
-            res = self.model.predict(bgr, conf=self.conf, verbose=False, device="cpu")[0]
-        except Exception:
-            return None
+    def _boxes(self, res):
         boxes = []
         for b in res.boxes:
             x1, y1, x2, y2 = [float(v) for v in b.xyxy[0]]
             boxes.append((str(self.names[int(b.cls)]), float(b.conf), x1, y1, x2, y2))
         return boxes
+
+    def raw(self, bgr):
+        if not self.load():
+            return None
+        try:
+            res = self.model.predict(bgr, conf=self.conf, imgsz=IMGSZ,
+                                     verbose=False, device="cpu")[0]
+            boxes = self._boxes(res)
+            has_plat = any(b[0] == "platform" for b in boxes)
+            has_piece = any(b[0] == "piece" for b in boxes)
+            if not (has_plat and has_piece):
+                res = self.model.predict(bgr, conf=self.conf, imgsz=RETRY_IMGSZ,
+                                         verbose=False, device="cpu")[0]
+                boxes = self._boxes(res)
+            return boxes
+        except Exception:
+            return None
 
     def _face_like(self, bgr, p, bg):
         h, w = bgr.shape[:2]

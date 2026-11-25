@@ -31,7 +31,7 @@ BAD_DIR = os.path.join(LOG_DIR, "bad")
 LINGER_S = 2.0
 BAD_LIMIT = 400
 RESTART_WORDS = ("再玩", "再来", "重新", "继续游戏")
-ASK_CONF = 0.65
+ASK_CONF = float(os.environ.get("JUMP_ASK_CONF", "0.65"))
 _YOLO = None
 
 
@@ -120,6 +120,7 @@ def analyze_view(cfg, frame, ref=None):
     res = yolo_view(sub, ref_sub)
     if res is None:
         res = analyze(sub, cfg, prefer="cv")
+        res.confidence = min(res.confidence, 0.45)
     if x0:
         if res.piece:
             res.piece = (res.piece[0] + x0, res.piece[1])
@@ -448,8 +449,7 @@ class Runner:
                   "det": det_of(res, False),
                   "stats": self.base_stats()})
             return
-        low = (res.method != "legacy"
-               and res.confidence < (0.30 if force else ASK_CONF))
+        low = res.confidence < (0.30 if force else ASK_CONF)
         if res.piece is not None and (assist_tap or res.board is None or low):
             if not assist_tap:
                 if assist:
@@ -499,11 +499,6 @@ class Runner:
             return
         if res.piece is None or res.board is None:
             self.note_wait("识别失败", res)
-            emit({"t": "res", "kind": "wait", "det": det_of(res, False),
-                  "stats": self.base_stats()})
-            return
-        if res.method != "legacy" and res.confidence < (0.30 if force else 0.65):
-            self.note_wait("识别置信度过低 %.2f" % res.confidence, res)
             emit({"t": "res", "kind": "wait", "det": det_of(res, False),
                   "stats": self.base_stats()})
             return
@@ -666,6 +661,8 @@ class Runner:
             emit({"t": "res", "kind": "ok", "reward": None,
                   "det": det_of(after, False), "stats": self.base_stats()})
             return
+        if err is None:
+            err = 0.0
         tex = None
         kind = None
         if block is not None:
