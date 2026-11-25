@@ -27,6 +27,7 @@ typedef struct {
 
 static Child g_child;
 static volatile LONG g_child_alive = 0;
+volatile LONG g_pause_mark_req = 0;
 static wchar_t g_root[MAX_PATH] = L"";
 
 static int jfind(const char* s, const char* key, int* out_pos) {
@@ -591,6 +592,10 @@ static DWORD WINAPI worker_main(LPVOID param) {
 
     while (g_running && !g_stop_req) {
         if (g_paused) {
+            if (InterlockedExchange(&g_pause_mark_req, 0)) {
+                const char* mark = "{\"t\":\"pause_mark\"}\n";
+                child_write(mark, (int)strlen(mark));
+            }
             g_state = ST_PAUSED;
             Sleep(120);
             continue;
@@ -746,6 +751,7 @@ void worker_start(HWND hwnd) {
     InterlockedExchange(&g_paused, 0);
     InterlockedExchange(&g_assist, 0);
     InterlockedExchange(&g_assist_got, 0);
+    InterlockedExchange(&g_pause_mark_req, 0);
     InterlockedExchange(&g_running, 1);
     g_thread = CreateThread(NULL, 0, worker_main, NULL, 0, NULL);
     if (!g_thread) {
@@ -760,6 +766,7 @@ void worker_stop(void) {
     InterlockedExchange(&g_stop_req, 1);
     InterlockedExchange(&g_assist, 0);
     InterlockedExchange(&g_assist_got, 0);
+    InterlockedExchange(&g_pause_mark_req, 0);
     if (g_child.h_write) {
         CloseHandle(g_child.h_write);
         g_child.h_write = NULL;

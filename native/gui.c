@@ -889,7 +889,12 @@ static void do_button(int id) {
         if (g_running) worker_stop();
     } else if (id == BTN_PAUSE) {
         if (!g_running) return;
+        int was = (int)g_paused;
         InterlockedExchange(&g_paused, g_paused ? 0 : 1);
+        if (!was && g_paused)
+            InterlockedExchange(&g_pause_mark_req, 1);
+        else if (was && !g_paused)
+            InterlockedExchange(&g_pause_mark_req, 0);
         log_line(g_paused ? L"已暂停" : L"已继续");
     }
     InvalidateRect(g_main, NULL, FALSE);

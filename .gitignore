@@ -36,3 +36,4 @@ ml_model.json.tmp
 native/build/*.o
 native/build/*.res
 ml/vision_calib.npz
+ml/special_memory.json

@@ -99,6 +99,7 @@ extern volatile LONG g_assist;
 extern volatile LONG g_assist_got;
 extern volatile LONG g_assist_x;
 extern volatile LONG g_assist_y;
+extern volatile LONG g_pause_mark_req;
 extern HWND g_target;
 extern wchar_t g_target_title[256];
 extern int g_btn_hover;
