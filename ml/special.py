@@ -8,7 +8,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MEMORY_PATH = os.environ.get(
     "JUMP_SPECIAL_MEMORY") or os.path.join(ROOT, "ml", "special_memory.json")
 MEMORY_LIMIT = 40
-MATCH_DIST = 0.18
+MATCH_DIST = 0.06
 
 
 def _crop_keep(sub, block, piece):
@@ -52,6 +52,19 @@ def block_features(sub, block, piece):
     ]
 
 
+def special_like(features):
+    if features is None:
+        return False
+    dark, lowv, sat, hstd, bright, edge = [float(v) for v in features]
+    if dark > 0.15 or lowv > 0.25:
+        return True
+    if sat > 0.12 and hstd > 0.15:
+        return True
+    if bright > 0.30 and edge > 0.055:
+        return True
+    return False
+
+
 def _load_memory():
     try:
         with open(MEMORY_PATH, "r", encoding="utf-8") as f:
@@ -68,7 +81,7 @@ def memory_count():
 
 
 def remember(features):
-    if features is None:
+    if not special_like(features):
         return memory_count()
     rows = _load_memory()
     rows.append([float(v) for v in features])
@@ -90,6 +103,8 @@ def matches_memory(features):
         return False
     a = np.asarray(features, np.float32)
     for row in rows:
+        if not special_like(row):
+            continue
         b = np.asarray(row, np.float32)
         if float(np.linalg.norm(a - b)) <= MATCH_DIST:
             return True

@@ -315,18 +315,19 @@ class YoloVision:
         d = math.hypot(tx - px, ty - py)
         box = (p[1], p[2], p[3] - p[1], p[4] - p[2])
         conf = min(piece[0], p[0]) * penalty
-        if self.calib.count:
+        if self.calib.count and (penalty < 1.0 or conf < 0.55):
             s0 = self.calib.score(bgr, (tx, ty))
-            hit = self.calib.locate(bgr)
-            if hit is not None and hit[2] >= 0.62 and hit[2] > s0 + 0.12:
-                hx, hy = hit[0], hit[1]
-                if (math.hypot(hx - px, hy - py) > 60.0
-                        and 20 < hx < bgr.shape[1] - 20
-                        and 20 < hy < bgr.shape[0] - 20):
-                    tx, ty = hx, hy
-                    d = math.hypot(tx - px, ty - py)
-                    method = "calib"
-                    box = None
-                    conf = max(conf, 0.75)
+            if s0 < 0.45:
+                hit = self.calib.locate(bgr)
+                if (hit is not None and hit[2] >= 0.72
+                        and hit[2] > s0 + 0.25):
+                    hx, hy = hit[0], hit[1]
+                    if (math.hypot(hx - px, hy - py) > 60.0
+                            and 20 < hx < bgr.shape[1] - 20
+                            and 20 < hy < bgr.shape[0] - 20):
+                        tx, ty = hx, hy
+                        d = math.hypot(tx - px, ty - py)
+                        method = "calib"
+                        box = None
         return FrameResult(piece=(px, py), board=(tx, ty), distance=d,
                            confidence=conf, method=method, box=box)

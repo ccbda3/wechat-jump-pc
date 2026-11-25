@@ -23,7 +23,7 @@ from policy import MAX_PRESS_MS, MIN_PRESS_MS, MS_PER_PX, Policy
 from ocr import OcrReader, game_crop
 from landing import landing_reward, project_center
 from special import (block_features, block_texture, matches_memory,
-                     memory_count, remember, special_block)
+                     memory_count, remember, special_block, special_like)
 from yolo_vision import YoloVision
 
 MODEL_PATH = os.path.join(ROOT, "ml_model.json")
@@ -261,6 +261,9 @@ class Runner:
             return
         if self.last_feat is None:
             self.logline("暂停：暂时没有可记录的特殊方块")
+            return
+        if not special_like(self.last_feat):
+            self.logline("暂停：这块看起来不是特殊方块，未记录")
             return
         n = remember(self.last_feat)
         self.logline("已记录特殊方块样本 #%d，下次遇到相似方块会停留加分" % n)

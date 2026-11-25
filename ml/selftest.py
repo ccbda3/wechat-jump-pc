@@ -209,7 +209,7 @@ def test_special():
         os.remove(tmp)
     os.environ["JUMP_SPECIAL_MEMORY"] = tmp
     from ml.special import (block_features, matches_memory, memory_count,
-                            remember)
+                            remember, special_like)
 
     block = {"left": 60, "right": 240, "top": 70, "bottom": 220, "x": 150}
     piece = (150, 200)
@@ -219,6 +219,8 @@ def test_special():
     bright[70:220, 60:240] = (212, 212, 212)
     fd = block_features(dark, block, piece)
     fb = block_features(bright, block, piece)
+    if not special_like(fd) or special_like(fb):
+        raise SystemExit("特殊方块特征筛选异常")
     n = remember(fd)
     print("特殊样本：%d 个，暗块命中=%s，亮块命中=%s"
           % (n, matches_memory(fd), matches_memory(fb)))
