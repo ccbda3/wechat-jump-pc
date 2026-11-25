@@ -17,7 +17,7 @@ EMIT_HOOK = None
 import cv2
 import numpy as np
 
-from ai_vision import VisionConfig, analyze, detect_game_over
+from ai_vision import FrameResult, VisionConfig, analyze, detect_game_over
 from correct import Corrector
 from policy import MAX_PRESS_MS, MIN_PRESS_MS, MS_PER_PX, Policy
 from ocr import OcrReader, game_crop
@@ -32,6 +32,7 @@ LINGER_S = 2.0
 BAD_LIMIT = 400
 RESTART_WORDS = ("再玩", "再来", "重新", "继续游戏")
 ASK_CONF = float(os.environ.get("JUMP_ASK_CONF", "0.65"))
+LEGACY_FALLBACK = os.environ.get("JUMP_LEGACY_FALLBACK") == "1"
 _YOLO = None
 
 
@@ -119,6 +120,8 @@ def analyze_view(cfg, frame, ref=None):
                                   ref[3][2], ref[3][3]),)
     res = yolo_view(sub, ref_sub)
     if res is None:
+        if not LEGACY_FALLBACK:
+            return FrameResult(method="failed"), sub, x0
         res = analyze(sub, cfg, prefer="cv")
         res.confidence = min(res.confidence, 0.45)
     if x0:
@@ -456,8 +459,9 @@ class Runner:
                     emit({"t": "res", "kind": "wait", "det": det_of(res, False),
                           "stats": self.base_stats()})
                 else:
-                    self.note_wait("识别可信度低 %.2f，等待人工点击目标中心"
-                                   % res.confidence, res)
+                    reason = ("未识别到目标方块" if res.board is None
+                              else "识别可信度低 %.2f" % res.confidence)
+                    self.note_wait("%s，等待人工点击目标中心" % reason, res)
                     emit({"t": "res", "kind": "ask", "det": det_of(res, False),
                           "stats": self.base_stats()})
                 return

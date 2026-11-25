@@ -643,7 +643,10 @@ static DWORD WINAPI worker_main(LPVOID param) {
             if (!assist) {
                 InterlockedExchange(&g_assist, 1);
                 InterlockedExchange(&g_assist_got, 0);
-                log_line(L"识别可信度低（%.2f）：请在游戏画面上点击目标方块中心", res.det.conf);
+                if (res.det.has_board)
+                    log_line(L"识别可信度低（%.2f）：请在游戏画面上点击目标方块中心", res.det.conf);
+                else
+                    log_line(L"未识别到目标方块：请在游戏画面上点击目标方块中心");
             }
             apply_det(&res.det, 0.0, 0);
             g_state = ST_ASSIST;

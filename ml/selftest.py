@@ -204,6 +204,7 @@ def test_worker():
     env = os.environ.copy()
     env["JUMP_CALIB_PATH"] = calib
     env["JUMP_ASK_CONF"] = "0"
+    env["JUMP_LEGACY_FALLBACK"] = "1"
     proc = subprocess.Popen(
         [py, worker], cwd=ROOT, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
         stderr=subprocess.PIPE, bufsize=0, env=env)

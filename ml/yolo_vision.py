@@ -183,10 +183,12 @@ class YoloVision:
                     piece = (conf, x1, y1, x2, y2)
             elif name == "platform":
                 plats.append((conf, x1, y1, x2, y2))
-        if piece is None or not plats:
+        if piece is None:
             return None
         px = (piece[1] + piece[3]) / 2.0
         py = piece[4] - 2.0
+        if not plats:
+            return FrameResult(piece=(px, py), confidence=piece[0], method="yolo")
         bg = bg_color(bgr)
         plats = [self._grow_up(bgr, p, bg) for p in plats]
         old_box = None
