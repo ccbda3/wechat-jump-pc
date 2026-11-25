@@ -654,10 +654,8 @@ static DWORD WINAPI worker_main(LPVOID param) {
             continue;
         }
         if (manual && strcmp(res.kind, "wait") == 0) {
-            if (has_tap) {
-                InterlockedExchange(&g_manual_got, 0);
-            } else if (InterlockedExchangeAdd(&g_manual_preview, 0)
-                       && res.det.has_board) {
+            if (!has_tap && InterlockedExchangeAdd(&g_manual_preview, 0)
+                && res.det.has_board) {
                 POINT cpt = {0, 0};
                 ClientToScreen(hwnd, &cpt);
                 SetCursorPos(cpt.x + (int)res.det.bx, cpt.y + (int)res.det.by);
@@ -668,9 +666,6 @@ static DWORD WINAPI worker_main(LPVOID param) {
             InterlockedExchange(&g_assist, 0);
             InterlockedExchange(&g_assist_got, 0);
             InterlockedExchange(&g_manual_got, 0);
-        }
-        if (assist && has_tap && strcmp(res.kind, "press") != 0) {
-            InterlockedExchange(&g_assist_got, 0);
         }
         if (strcmp(res.kind, "press") == 0 && res.has_ms) {
             int sx = 0, sy = 0;

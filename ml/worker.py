@@ -417,7 +417,10 @@ class Runner:
             return
         if manual:
             if res.piece is None:
-                self.note_wait("手动模式：没识别到棋子", res)
+                if int(req.get("has_tap", 0)):
+                    self.note_wait("手动点击已收到，暂未识别到棋子，稍后自动重试", res)
+                else:
+                    self.note_wait("手动模式：没识别到棋子", res)
                 emit({"t": "res", "kind": "wait", "det": det_of(res, False),
                       "stats": self.base_stats()})
                 return
@@ -441,6 +444,10 @@ class Runner:
                       "stats": self.base_stats()})
                 return
             ms = min(max(MS_PER_PX * d * base_coef, MIN_PRESS_MS), MAX_PRESS_MS)
+            res.board = (tx, ty)
+            res.distance = d
+            res.method = "manual"
+            res.box = None
             self.pending[self.pending_key(req)] = {
                 "frame": frame, "res": res, "feat": None, "action": -1,
                 "scale": 1.0, "ms": ms, "d": d, "base_unit": MS_PER_PX * d,
@@ -449,8 +456,7 @@ class Runner:
             self.episode_open = True
             self.need_start = False
             self.score_before = self.ocr.score_crop(sub)[0]
-            self.prev = (frame.copy(), tuple(res.piece), tuple(res.board),
-                         tuple(res.box) if res.box else None)
+            self.prev = (frame.copy(), tuple(res.piece), tuple(res.board), None)
             self.logline("手动目标 (%.0f,%.0f) 距离 %.0fpx 按压 %.0fms"
                          % (tx, ty, d, ms))
             emit({"t": "res", "kind": "press", "ms": ms, "action": -1,
@@ -460,6 +466,11 @@ class Runner:
                   "stats": self.base_stats()})
             return
         if assist and not assist_tap:
+            emit({"t": "res", "kind": "wait", "det": det_of(res, False),
+                  "stats": self.base_stats()})
+            return
+        if assist_tap and res.piece is None:
+            self.note_wait("人工修正点击已收到，暂未识别到棋子，稍后自动重试", res)
             emit({"t": "res", "kind": "wait", "det": det_of(res, False),
                   "stats": self.base_stats()})
             return
