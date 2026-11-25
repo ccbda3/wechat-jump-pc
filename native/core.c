@@ -669,6 +669,14 @@ static DWORD WINAPI worker_main(LPVOID param) {
                 InterlockedExchange(&g_manual_preview, 0);
             }
         }
+        if (!manual && strcmp(res.kind, "restart") == 0) {
+            InterlockedExchange(&g_assist, 0);
+            InterlockedExchange(&g_assist_got, 0);
+            InterlockedExchange(&g_manual_got, 0);
+        }
+        if (assist && has_tap && strcmp(res.kind, "press") != 0) {
+            InterlockedExchange(&g_assist_got, 0);
+        }
         if (strcmp(res.kind, "press") == 0 && res.has_ms) {
             int sx = 0, sy = 0;
             POINT cpt = {0, 0};

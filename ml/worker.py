@@ -571,6 +571,8 @@ class Runner:
         if info is None:
             emit({"t": "res", "kind": "wait", "stats": self.base_stats()})
             return
+        self.last_kind = None
+        self.last_feat = None
         after, sub_after, ax0 = analyze_view(self.cfg, frame)
         if after.piece is not None and after.board is not None and info.get("sig"):
             same = (round(float(after.distance)),

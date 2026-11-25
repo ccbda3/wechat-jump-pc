@@ -173,6 +173,9 @@ static int is_wechat_window(HWND hwnd) {
 }
 
 static void refresh_windows(void) {
+    InterlockedExchange(&g_assist, 0);
+    InterlockedExchange(&g_assist_got, 0);
+    InterlockedExchange(&g_manual_got, 0);
     g_win_count = 0;
     EnumWindows(enum_proc, 0);
     g_win_sel = -1;
@@ -867,6 +870,9 @@ static void click_row(int my) {
     g_target = g_wins[idx].hwnd;
     wcsncpy(g_target_title, g_wins[idx].title, 255);
     g_target_title[255] = 0;
+    InterlockedExchange(&g_assist, 0);
+    InterlockedExchange(&g_assist_got, 0);
+    InterlockedExchange(&g_manual_got, 0);
     log_line(L"已选择窗口：%s", g_wins[idx].title);
     InvalidateRect(g_main, NULL, FALSE);
 }
@@ -891,7 +897,7 @@ static void do_button(int id) {
         if (!g_running) return;
         int was = (int)g_paused;
         InterlockedExchange(&g_paused, g_paused ? 0 : 1);
-        if (!was && g_paused)
+        if (!was && g_paused && !g_assist)
             InterlockedExchange(&g_pause_mark_req, 1);
         else if (was && !g_paused)
             InterlockedExchange(&g_pause_mark_req, 0);
