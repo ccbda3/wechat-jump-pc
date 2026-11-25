@@ -152,6 +152,52 @@ class YoloVision:
         ty = face_center_y(bgr, (p[1], p[2], p[3] - p[1], p[4] - p[2]), bg)
         return tx, ty
 
+    def _newness(self, bgr, prev, prev_piece, prev_board, cur_piece, shift):
+        if prev is None or shift is None:
+            return None
+        h, w = bgr.shape[:2]
+        if prev.shape[:2] != (h, w):
+            return None
+        dx, dy = shift
+        if abs(dx) > w * 0.6 or abs(dy) > h * 0.6:
+            return None
+        m = np.float32([[1, 0, dx], [0, 1, dy]])
+        warped = cv2.warpAffine(prev, m, (w, h), flags=cv2.INTER_LINEAR,
+                                borderMode=cv2.BORDER_CONSTANT,
+                                borderValue=(0, 0, 0))
+        valid = cv2.warpAffine(np.full((h, w), 255, np.uint8), m, (w, h),
+                               flags=cv2.INTER_NEAREST)
+        a = cv2.GaussianBlur(bgr, (3, 3), 0).astype(np.int16)
+        b = cv2.GaussianBlur(warped, (3, 3), 0).astype(np.int16)
+        diff = np.abs(a - b).sum(axis=2)
+        new = ((diff > 55) & (valid > 0)).astype(np.uint8) * 255
+        for cx, cy in ((prev_piece[0] + dx, prev_piece[1] + dy), cur_piece):
+            cv2.rectangle(new, (int(cx - 50), int(cy - 120)),
+                          (int(cx + 50), int(cy + 25)), 0, -1)
+        new[:int(h * 0.16), :] = 0
+        new[int(h * 0.985):, :] = 0
+        new = cv2.morphologyEx(new, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
+        new = cv2.morphologyEx(new, cv2.MORPH_CLOSE, np.ones((5, 5), np.uint8))
+        return new
+
+    def _new_score(self, mask, p):
+        if mask is None:
+            return 0.0
+        h, w = mask.shape[:2]
+        x1 = max(0, int(p[1]))
+        x2 = min(w, int(p[3]))
+        y1 = max(0, int(p[2]))
+        y2 = min(h, int(p[4]))
+        bw, bh = x2 - x1, y2 - y1
+        if bw < 10 or bh < 8:
+            return 0.0
+        ya = y1 + int(bh * 0.08)
+        yb = y1 + int(bh * 0.55)
+        roi = mask[ya:yb, x1:x2]
+        if roi.size == 0:
+            return 0.0
+        return float((roi > 0).mean())
+
     def _pick(self, plats, px, py, old_box=None, extra=True):
         fwd = None
         bwd = None
@@ -176,7 +222,7 @@ class YoloVision:
                     bwd = (dist, p, False)
         return fwd if fwd is not None else bwd
 
-    def analyze(self, bgr, ref=None):
+    def analyze(self, bgr, ref=None, prev=None):
         boxes = self.raw(bgr)
         if not boxes:
             return None
@@ -197,7 +243,10 @@ class YoloVision:
         bg = bg_color(bgr)
         plats = [self._grow_up(bgr, p, bg) for p in plats]
         old_box = None
+        shift = None
         if ref is not None:
+            prev_piece = ref[0]
+            prev_board = ref[1]
             prev_box = ref[2] if len(ref) > 2 else None
             cur = None
             for p in plats:
@@ -212,21 +261,45 @@ class YoloVision:
             if cur is not None and prev_box is not None:
                 dx = cur[1] - prev_box[0]
                 dy = cur[2] - prev_box[1]
-                if math.hypot(dx, dy) < 480:
+                ratio = (cur[3] - cur[1]) / max(1.0, prev_box[2])
+                if math.hypot(dx, dy) < 480 and 0.5 < ratio < 2.0:
+                    shift = (dx, dy)
                     old_box = (prev_box[0] + dx, prev_box[1] + dy,
                                prev_box[2], prev_box[3])
-        best = self._pick(plats, px, py, old_box)
+            if shift is None:
+                dx = px - prev_board[0]
+                dy = py - prev_board[1]
+                if math.hypot(dx, dy) < 480:
+                    shift = (dx, dy)
+        new_mask = None
+        if ref is not None and prev is not None and shift is not None:
+            new_mask = self._newness(bgr, prev, ref[0], ref[1], (px, py), shift)
+        pool = plats
+        fresh = []
+        if new_mask is not None:
+            fresh = [p for p in plats if self._new_score(new_mask, p) >= 0.25]
+            if fresh:
+                pool = fresh
+        best = self._pick(pool, px, py, old_box)
         penalty = 1.0
         if best is not None:
             ok = (self._face_like(bgr, best[1], bg)
                   and self._open_above(bgr, best[1], bg))
             if not ok:
-                filtered = [p for p in plats
+                filtered = [p for p in pool
                             if self._face_like(bgr, p, bg)
                             and self._open_above(bgr, p, bg)]
                 alt = self._pick(filtered, px, py, old_box)
                 if alt is not None:
                     best = alt
+                elif pool is not plats:
+                    alt = self._pick([p for p in plats
+                                      if self._face_like(bgr, p, bg)
+                                      and self._open_above(bgr, p, bg)],
+                                     px, py, old_box)
+                    if alt is not None:
+                        best = alt
+                    penalty = 0.55
                 else:
                     penalty = 0.55
         if best is None:
@@ -237,9 +310,9 @@ class YoloVision:
         if not best[2]:
             penalty = min(penalty, 0.5)
         p = best[1]
+        method = "yolo_new" if pool is not plats else "yolo"
         tx, ty = self._board_point(bgr, p, bg)
         d = math.hypot(tx - px, ty - py)
-        method = "yolo"
         box = (p[1], p[2], p[3] - p[1], p[4] - p[2])
         conf = min(piece[0], p[0]) * penalty
         if self.calib.count:

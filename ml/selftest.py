@@ -231,6 +231,26 @@ def test_special():
     os.remove(tmp)
 
 
+def test_newness():
+    from ml.yolo_vision import YoloVision
+
+    h, w = 400, 500
+    prev = np.full((h, w, 3), (210, 225, 240), np.uint8)
+    cv2.rectangle(prev, (80, 200), (220, 300), (120, 180, 150), -1)
+    m = np.float32([[1, 0, 40], [0, 1, -50]])
+    cur = cv2.warpAffine(prev, m, (w, h), flags=cv2.INTER_LINEAR,
+                         borderMode=cv2.BORDER_CONSTANT,
+                         borderValue=(210, 225, 240))
+    cv2.rectangle(cur, (300, 90), (430, 190), (150, 120, 200), -1)
+    v = YoloVision()
+    mask = v._newness(cur, prev, (150, 190), (150, 250), (190, 140), (40, -50))
+    s_new = v._new_score(mask, (0.9, 300.0, 90.0, 430.0, 190.0))
+    s_old = v._new_score(mask, (0.9, 120.0, 150.0, 260.0, 250.0))
+    print("新区域对比：新块 %.2f，旧块 %.2f" % (s_new, s_old))
+    if s_new < 0.5 or s_old > 0.2:
+        raise SystemExit("上一帧新出现区域对比失败")
+
+
 def test_worker():
     worker = os.path.join(ROOT, "ml", "worker.py")
     py = os.path.join(ROOT, ".venv", "Scripts", "python.exe")
@@ -353,6 +373,8 @@ def main():
     test_vision()
     print("== 顶面识别 ==")
     test_topface()
+    print("== 新区域对比 ==")
+    test_newness()
     print("== 特殊采样 ==")
     test_special()
     print("== 修正样本 ==")

@@ -60,12 +60,12 @@ def save_bad(frame, piece, block, err, tag):
         pass
 
 
-def yolo_view(sub, ref=None):
+def yolo_view(sub, ref=None, prev=None):
     global _YOLO
     if _YOLO is None:
         _YOLO = YoloVision()
     try:
-        return _YOLO.analyze(sub, ref)
+        return _YOLO.analyze(sub, ref, prev)
     except Exception:
         return None
 
@@ -114,12 +114,15 @@ def features(res, w, h, base_unit, prev_reward, x0=0):
 def analyze_view(cfg, frame, ref=None):
     sub, x0 = game_crop(frame)
     ref_sub = None
+    prev_sub = None
     if ref is not None:
         ref_sub = ((ref[1][0] - x0, ref[1][1]), (ref[2][0] - x0, ref[2][1]))
         if len(ref) > 3 and ref[3]:
             ref_sub = ref_sub + ((ref[3][0] - x0, ref[3][1],
                                   ref[3][2], ref[3][3]),)
-    res = yolo_view(sub, ref_sub)
+        if ref[0] is not None:
+            prev_sub, _ = game_crop(ref[0])
+    res = yolo_view(sub, ref_sub, prev_sub)
     if res is None:
         if not LEGACY_FALLBACK:
             return FrameResult(method="failed"), sub, x0
