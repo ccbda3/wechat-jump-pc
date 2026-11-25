@@ -324,6 +324,14 @@ def test_worker():
         if not os.path.exists(calib):
             raise SystemExit("人工修正未保存样本")
 
+        send(proc, {"t": "frame", "id": 6, "w": W, "h": H, "phase": "before",
+                    "base": 1.0, "greedy": 0, "settled": 1,
+                    "assist": 1, "has_tap": 0}, make_frame())
+        pending = read(proc)
+        print("修正等待：kind=%s" % pending["kind"])
+        if pending["kind"] != "wait":
+            raise SystemExit("人工修正待点击时不应自动按压")
+
         print("协议联调通过，首跳按压=%.0fms" % base_unit)
     finally:
         try:

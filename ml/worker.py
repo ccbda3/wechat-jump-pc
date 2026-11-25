@@ -469,6 +469,10 @@ class Runner:
                   "det": det_of(res, False),
                   "stats": self.base_stats()})
             return
+        if assist and not assist_tap:
+            emit({"t": "res", "kind": "wait", "det": det_of(res, False),
+                  "stats": self.base_stats()})
+            return
         low = res.confidence < (0.30 if force else ASK_CONF)
         if res.piece is not None and (assist_tap or res.board is None or low):
             if not assist_tap:
