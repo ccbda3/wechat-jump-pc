@@ -315,6 +315,9 @@ class YoloVision:
         d = math.hypot(tx - px, ty - py)
         box = (p[1], p[2], p[3] - p[1], p[4] - p[2])
         conf = min(piece[0], p[0]) * penalty
+        if box is not None and box[2] < 85:
+            conf = min(conf, 0.28)
+            method = "yolo_narrow"
         if self.calib.count and (penalty < 1.0 or conf < 0.55):
             s0 = self.calib.score(bgr, (tx, ty))
             if s0 < 0.45:
